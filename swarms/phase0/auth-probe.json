@@ -1,0 +1,37 @@
+{
+  "run_name": "cornerman-engine-auth-probe",
+  "workdir": "/tmp/cornerman-engine-auth-probe",
+  "max_parallel": 2,
+  "tasks": [
+    {
+      "key": "codex-sol",
+      "engine": "codex",
+      "model": "gpt-6-sol",
+      "task_type": "probe",
+      "timeout_s": 300,
+      "max_attempts": 1,
+      "expect_files": [
+        "probe.txt",
+        "seed.txt"
+      ],
+      "spec": "You are a probe worker checking that this engine can run shell commands. Work only in the current directory. First create a file named seed.txt containing the word seed. Then run the shell command `stat -f %i seed.txt` (it prints the file's inode number, which cannot be guessed) and create probe.txt containing exactly one line: that number. You must actually run the command; do not estimate. Do not create any other files.",
+      "check": "want=$(stat -f %i seed.txt); got=$(sed -n 1p probe.txt | tr -d '[:space:]'); [ \"$got\" = \"$want\" ] || { echo \"FAIL: probe.txt has '$got' but seed.txt's inode is $want, so the worker did not run the command\"; exit 1; }",
+      "verified": "probe.txt holds seed.txt's real inode, which only a shell command could produce: the engine is authenticated and can run tools."
+    },
+    {
+      "key": "grok-47",
+      "engine": "grok",
+      "model": "grok-4.7",
+      "task_type": "probe",
+      "timeout_s": 300,
+      "max_attempts": 1,
+      "expect_files": [
+        "probe.txt",
+        "seed.txt"
+      ],
+      "spec": "You are a probe worker checking that this engine can run shell commands. Work only in the current directory. First create a file named seed.txt containing the word seed. Then run the shell command `stat -f %i seed.txt` (it prints the file's inode number, which cannot be guessed) and create probe.txt containing exactly one line: that number. You must actually run the command; do not estimate. Do not create any other files.",
+      "check": "want=$(stat -f %i seed.txt); got=$(sed -n 1p probe.txt | tr -d '[:space:]'); [ \"$got\" = \"$want\" ] || { echo \"FAIL: probe.txt has '$got' but seed.txt's inode is $want, so the worker did not run the command\"; exit 1; }",
+      "verified": "probe.txt holds seed.txt's real inode, which only a shell command could produce: the engine is authenticated and can run tools."
+    }
+  ]
+}
