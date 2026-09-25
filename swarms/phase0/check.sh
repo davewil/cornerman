@@ -41,4 +41,4 @@ git add -A -- lib mix.exs mix.lock
 git diff --cached HEAD > "$OUT/phase0.patch"
 [ -s "$OUT/phase0.patch" ] || fail "exported patch is empty"
 cp notes.md "$OUT/notes.md"
-echo "PASS: 11 acceptance tests green twice; patch at $OUT/phase0.patch"
+echo "PASS: acceptance tests green twice; patch at $OUT/phase0.patch"
