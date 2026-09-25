@@ -76,17 +76,20 @@ defmodule Cornerman.SpawnTest do
     test "timeout kills the worker's grandchildren, even ones ignoring SIGTERM", %{tmp_dir: dir} do
       pidfile = Path.join(dir, "pids")
 
+      # The pid file path is passed as $1, never interpolated: ExUnit's tmp_dir path
+      # contains this test's name, apostrophe included.
       script = """
       trap '' TERM
-      echo $$ >> #{pidfile}
+      echo $$ >> "$1"
       ( trap '' TERM; sleep 300 ) &
-      echo $! >> #{pidfile}
+      echo $! >> "$1"
       sleep 300 &
-      echo $! >> #{pidfile}
+      echo $! >> "$1"
       wait
       """
 
-      {:ok, ref} = Spawn.start(["sh", "-c", script], timeout_ms: 500, kill_grace_ms: 300)
+      {:ok, ref} =
+        Spawn.start(["sh", "-c", script, "sh", pidfile], timeout_ms: 500, kill_grace_ms: 300)
 
       pids = wait_for_pids(pidfile, 3)
       assert Enum.all?(pids, &alive?/1), "workers should be running before the timeout"
@@ -97,9 +100,9 @@ defmodule Cornerman.SpawnTest do
 
     test "stop/1 kills the worker and its children", %{tmp_dir: dir} do
       pidfile = Path.join(dir, "pids")
-      script = "echo $$ >> #{pidfile}; sleep 300 & echo $! >> #{pidfile}; wait"
+      script = ~S(echo $$ >> "$1"; sleep 300 & echo $! >> "$1"; wait)
 
-      {:ok, ref} = Spawn.start(["sh", "-c", script], [])
+      {:ok, ref} = Spawn.start(["sh", "-c", script, "sh", pidfile], [])
       pids = wait_for_pids(pidfile, 2)
 
       assert :ok = Spawn.stop(ref)
@@ -109,12 +112,12 @@ defmodule Cornerman.SpawnTest do
 
     test "killing the owning Erlang process kills the worker group", %{tmp_dir: dir} do
       pidfile = Path.join(dir, "pids")
-      script = "echo $$ >> #{pidfile}; sleep 300 & echo $! >> #{pidfile}; wait"
+      script = ~S(echo $$ >> "$1"; sleep 300 & echo $! >> "$1"; wait)
       test_pid = self()
 
       owner =
         spawn(fn ->
-          {:ok, _ref} = Spawn.start(["sh", "-c", script], [])
+          {:ok, _ref} = Spawn.start(["sh", "-c", script, "sh", pidfile], [])
           send(test_pid, :started)
           Process.sleep(:infinity)
         end)
@@ -130,12 +133,12 @@ defmodule Cornerman.SpawnTest do
     test "SIGKILL of the whole BEAM leaves no worker alive", %{tmp_dir: dir} do
       pidfile = Path.join(dir, "pids")
       beam_pidfile = Path.join(dir, "beam.pid")
-      script = "echo $$ >> #{pidfile}; sleep 300 & echo $! >> #{pidfile}; wait"
+      script = ~S(echo $$ >> "$1"; sleep 300 & echo $! >> "$1"; wait)
 
       code = """
       {:ok, _} = Application.ensure_all_started(:cornerman)
       File.write!(#{inspect(beam_pidfile)}, System.pid())
-      {:ok, _ref} = Cornerman.Spawn.start(["sh", "-c", #{inspect(script)}], [])
+      {:ok, _ref} = Cornerman.Spawn.start(["sh", "-c", #{inspect(script)}, "sh", #{inspect(pidfile)}], [])
       Process.sleep(:infinity)
       """
 
