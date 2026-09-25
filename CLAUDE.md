@@ -3,6 +3,9 @@
 An Elixir/OTP/LiveView port of Ringer that tracks upstream. Read `README.md` for the relationship
 and `docs/plan.html` for the architecture and phases before changing anything structural.
 
+- Work is tracked in Linear: team `Engineering`, project `cornerman`, map issue ENG-473. Linear owns
+  state and the repo owns content. Conventions are in `docs/agents/issue-tracker.md`; claim the issue
+  before starting work.
 - `vendor/ringer-py` is the upstream Ringer submodule, pinned. Never edit it. Moving the pin is its
   own commit and must pass the conformance suite against both the new oracle and Cornerman.
 - Test at the boundary. Conformance cases drive the CLI and assert on exit code, stdout, eval JSONL
