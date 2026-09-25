@@ -1,0 +1,3 @@
+[submodule "vendor/ringer-py"]
+	path = vendor/ringer-py
+	url = https://github.com/NateBJones-Projects/ringer.git

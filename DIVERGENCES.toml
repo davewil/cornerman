@@ -1,0 +1,13 @@
+# Intended behaviour differences between Cornerman and the pinned Ringer oracle
+# (vendor/ringer-py). The conformance suite reads this file and treats the listed cases
+# as expected diffs. A difference that is not listed here is drift and fails the suite.
+#
+# One [[divergence]] table per difference:
+#
+# [[divergence]]
+# case = "run/per-run-dashboard-port"   # conformance case id
+# since = "2026-09-25"                   # date the divergence was accepted
+# upstream_sha = "0be58d3"               # oracle SHA it was measured against
+# reason = "Per-run dashboards on :8787+ are retired into the single LiveView endpoint."
+#
+# No entries yet: nothing has been ported.
