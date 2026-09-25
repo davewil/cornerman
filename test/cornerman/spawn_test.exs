@@ -98,6 +98,28 @@ defmodule Cornerman.SpawnTest do
       assert_all_dead(pids, 3_000)
     end
 
+    test "a grandchild ignoring SIGTERM dies even after the leader has exited on it", %{
+      tmp_dir: dir
+    } do
+      # The leader dies on the first SIGTERM; only a grandchild ignores it. erlexec escalates
+      # to SIGKILL only while the leader is alive, so relying on it alone leaks this child.
+      pidfile = Path.join(dir, "pids")
+
+      script = """
+      echo $$ >> "$1"
+      ( trap '' TERM; sleep 300 ) &
+      echo $! >> "$1"
+      wait
+      """
+
+      {:ok, ref} =
+        Spawn.start(["sh", "-c", script, "sh", pidfile], timeout_ms: 500, kill_grace_ms: 300)
+
+      pids = wait_for_pids(pidfile, 2)
+      assert_receive {:cornerman_spawn, ^ref, {:exit, :timeout}}, 5_000
+      assert_all_dead(pids, 3_000)
+    end
+
     test "stop/1 kills the worker and its children", %{tmp_dir: dir} do
       pidfile = Path.join(dir, "pids")
       script = ~S(echo $$ >> "$1"; sleep 300 & echo $! >> "$1"; wait)
