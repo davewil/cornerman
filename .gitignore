@@ -22,3 +22,6 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 cornerman-*.tar
 
+
+# Ringer swarm exports (patches, notes); the accepted patch lands as its own commit.
+/swarms/*/out/

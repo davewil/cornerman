@@ -9,7 +9,9 @@ defmodule Cornerman.SpawnTest do
   Contract under test (`Cornerman.Spawn`):
 
     * `start(argv, opts)` returns `{:ok, ref}`. The command runs in its own process group,
-      with stdin closed and stderr merged into stdout. Options: `:cwd`,
+      with stdin connected to `/dev/null` (a reader sees EOF; a closed descriptor, which
+      makes reads fail with EBADF, does not satisfy this) and stderr merged into stdout.
+      Options: `:cwd`,
       `:timeout_ms` (default `:infinity`), and `:kill_grace_ms` (default 2000): how long
       after SIGTERM before the group gets SIGKILL.
     * The caller receives `{:cornerman_spawn, ref, {:data, binary}}` as output arrives, then
@@ -59,7 +61,7 @@ defmodule Cornerman.SpawnTest do
       assert collect_output(ref, 5_000) =~ "to-stderr"
     end
 
-    test "stdin is closed, so a reader sees EOF instead of hanging" do
+    test "stdin is /dev/null, so a reader sees EOF instead of hanging" do
       {:ok, ref} = Spawn.start(["cat"], timeout_ms: 3_000)
       assert_receive {:cornerman_spawn, ^ref, {:exit, {:status, 0}}}, 2_000
     end

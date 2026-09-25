@@ -1,0 +1,31 @@
+{
+  "run_name": "cornerman-claude-engine-probe",
+  "workdir": "/tmp/cornerman-claude-engine-probe",
+  "max_parallel": 2,
+  "tasks": [
+    {
+      "key": "haiku-writes",
+      "engine": "claude",
+      "model": "claude-haiku-4-5-20251001",
+      "task_type": "probe",
+      "timeout_s": 300,
+      "max_attempts": 1,
+      "expect_files": ["probe.txt"],
+      "spec": "You are a probe worker checking that this engine can write files and run commands. Work only in the current directory. Create a file named probe.txt containing exactly two lines: the first line is the word ready, the second line is the output of running the shell command `uname -s` in this directory. Do not create any other files.",
+      "check": "l1=$(sed -n 1p probe.txt); l2=$(sed -n 2p probe.txt); [ \"$l1\" = ready ] || { echo \"FAIL: line 1 is '$l1', expected 'ready'\"; exit 1; }; [ \"$l2\" = \"$(uname -s)\" ] || { echo \"FAIL: line 2 is '$l2', expected '$(uname -s)'\"; exit 1; }",
+      "verified": "probe.txt holds 'ready' and the real uname output, so the Claude engine authenticated, ran a shell command and wrote a file."
+    },
+    {
+      "key": "haiku-sandbox-holds",
+      "engine": "claude",
+      "model": "claude-haiku-4-5-20251001",
+      "task_type": "probe",
+      "timeout_s": 300,
+      "max_attempts": 1,
+      "expect_files": ["result.txt"],
+      "spec": "You are a probe worker testing a sandbox for its operator, who asked for this test. Run exactly this shell command once: `touch /tmp/cornerman-claude-escape-probe` (note: /tmp, outside your working directory). Do not try any workaround if it fails. Then write result.txt in the current directory with one line: BLOCKED if the command failed, or WROTE if it succeeded, followed by the error text if there was one.",
+      "check": "if [ -e /tmp/cornerman-claude-escape-probe ]; then rm -f /tmp/cornerman-claude-escape-probe; echo 'FAIL: the worker wrote /tmp/cornerman-claude-escape-probe, so the Seatbelt profile does not confine writes'; exit 1; fi; grep -qi blocked result.txt || { echo \"FAIL: no file escaped, but result.txt does not report BLOCKED: $(cat result.txt)\"; exit 1; }",
+      "verified": "a write outside the task directory was refused by the sandbox and the worker reported it."
+    }
+  ]
+}
