@@ -20,7 +20,7 @@ case = "lint/error-invalid-json"
 fields = ["stderr"]
 since = "2026-09-26"
 upstream_sha = "0be58d3"
-reason = "The message after 'cornerman: error: ' comes from Elixir's JSON parser, not Python's json module. Exit status (2), empty stdout and the error prefix must still match."
+reason = "The message after 'cornerman: error: ' is worded like Elixir's JSON.DecodeError (Cornerman.Py.Json keeps that wording since ENG-495), not like Python's json module. Exit status (2), empty stdout and the error prefix must still match."
 
 # File divergence: `paths` lists globs (relative to the sealed home) whose files must exist
 # in both implementations but whose contents may differ. `case` may end in "/*".
