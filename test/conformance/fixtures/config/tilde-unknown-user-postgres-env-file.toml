@@ -1,0 +1,7 @@
+# An unknown user in eval.postgres.env_file makes the whole config unusable, so no engine warning is printed.
+[engines.grok]
+bin = "grok"
+args_template = ["-p", "{spec}"]
+
+[eval.postgres]
+env_file = "~nosuchuserxyz/.env"

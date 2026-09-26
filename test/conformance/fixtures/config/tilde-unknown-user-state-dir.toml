@@ -1,0 +1,6 @@
+# An unknown user in state_dir makes the whole config unusable, so no engine warning is printed.
+state_dir = "~nosuchuserxyz/s"
+
+[engines.grok]
+bin = "grok"
+args_template = ["-p", "{spec}"]

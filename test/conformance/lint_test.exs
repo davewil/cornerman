@@ -124,6 +124,60 @@ defmodule Cornerman.Conformance.LintTest do
     conforms!("lint/diagnostic-inline-table-engine-order", ["lint", fixture], config: config)
   end
 
+  # `~user` in the paths a config sets. An unknown user makes Ringer's config load fail, and
+  # lint then carries on without the config, so the grok warning each fixture would trigger
+  # appears only when the config loaded (ENG-495).
+  for config <-
+        Path.wildcard(Path.join(Conformance.fixture("config"), "tilde-*.toml")) |> Enum.sort() do
+    id = "lint/config-" <> Path.basename(config, ".toml")
+
+    test id do
+      fixture = Conformance.fixture("lint/clean.json")
+      conforms!(unquote(id), ["lint", fixture], config: unquote(config))
+    end
+  end
+
+  # --- HOME unset: `~` falls back to the user database (ENG-495) --------------------------
+
+  # A HOME-unset case would pass vacuously if HOME leaked through, since both sides would then
+  # use the sealed home. The oracle's surrogate error counts the expanded workdir, so its
+  # position shows which home it used.
+  test "HOME-unset cases really run without HOME (guards the harness)" do
+    python = System.get_env("CORNERMAN_PYTHON") || System.find_executable("python3")
+
+    {pw_dir, 0} =
+      System.cmd(python, [
+        "-c",
+        "import os, pwd; print(os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir))"
+      ])
+
+    home = Conformance.sealed_home()
+    manifest = Path.join(home, "manifest.json")
+
+    File.write!(
+      manifest,
+      ~S({"run_name": "g", "workdir": "~/w\ud800", "tasks": [{"key": "a", "spec": "s", "check": "c"}]})
+    )
+
+    result = Conformance.run(:oracle, ["lint", manifest], home: home, env: [{"HOME", nil}])
+    File.rm_rf!(home)
+
+    position = String.length(String.trim(pw_dir)) + 2
+    assert position != String.length(home) + 2
+    assert result.stderr =~ "in position #{position}:", inspect(result)
+  end
+
+  # Python's expanduser looks the home up with pwd.getpwuid(os.getuid()) when HOME is unset.
+  # These fixtures live in a subdirectory so the glob above doesn't also run them with HOME set.
+  for fixture <-
+        Path.wildcard(Path.join(Conformance.fixture("lint/home-unset"), "*.json")) |> Enum.sort() do
+    id = "lint/home-unset/" <> Path.basename(fixture, ".json")
+
+    test id do
+      conforms!(unquote(id), ["lint", unquote(fixture)], env: [{"HOME", nil}])
+    end
+  end
+
   # --- every upstream template, as shipped ------------------------------------------------
 
   for manifest <-

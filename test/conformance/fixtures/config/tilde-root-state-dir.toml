@@ -1,0 +1,6 @@
+# A known user's home expands, so the config loads and grok is reported.
+state_dir = "~root/s"
+
+[engines.grok]
+bin = "grok"
+args_template = ["-p", "{spec}"]

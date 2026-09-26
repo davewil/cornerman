@@ -1,0 +1,7 @@
+# An unknown user in artifact.index_out makes the whole config unusable, so no engine warning is printed.
+[engines.grok]
+bin = "grok"
+args_template = ["-p", "{spec}"]
+
+[artifact]
+index_out = "~nosuchuserxyz/i"

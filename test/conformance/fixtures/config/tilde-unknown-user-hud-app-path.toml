@@ -1,0 +1,6 @@
+# An unknown user in hud_app_path makes the whole config unusable, so no engine warning is printed.
+hud_app_path = "~nosuchuserxyz/h"
+
+[engines.grok]
+bin = "grok"
+args_template = ["-p", "{spec}"]
