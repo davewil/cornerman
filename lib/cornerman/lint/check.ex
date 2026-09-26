@@ -5,6 +5,7 @@ defmodule Cornerman.Lint.Check do
   """
 
   alias Cornerman.Py
+  alias Cornerman.Py.Text
   require Py
 
   @file_test_ops ~w(-e -f -s -d -r -w -x -L)
@@ -121,6 +122,7 @@ defmodule Cornerman.Lint.Check do
   @spec strip_shell_comments(String.t()) :: String.t()
   def strip_shell_comments(command) do
     command
+    |> Text.scrub()
     |> String.to_charlist()
     |> strip_comments([], false, false, false)
   end
@@ -156,7 +158,7 @@ defmodule Cornerman.Lint.Check do
   """
   @spec file_pointer?(String.t()) :: boolean()
   def file_pointer?(spec) do
-    text = Py.strip(spec)
+    text = spec |> Text.scrub() |> Py.strip()
 
     cond do
       Regex.match?(~r/do (exactly )?what (it|the file|that file) says/iu, text) -> true
@@ -168,7 +170,7 @@ defmodule Cornerman.Lint.Check do
   @doc "Ringer's `instructs_git_commit`: mentions `git commit` other than to forbid it."
   @spec instructs_git_commit?(String.t()) :: boolean()
   def instructs_git_commit?(spec) do
-    lower = spec |> String.downcase() |> String.to_charlist()
+    lower = spec |> Text.scrub() |> String.downcase() |> String.to_charlist()
     find_commit(lower, 0)
   end
 

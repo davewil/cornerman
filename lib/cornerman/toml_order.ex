@@ -5,11 +5,12 @@ defmodule Cornerman.TomlOrder do
   `TomlElixir.decode/2` returns plain maps, but Ringer's `tomllib` returns insertion-ordered
   dicts and iterates them: engine-binary warnings print in config-file order, and when two
   registry models claim the same noncanonical slug the later one wins. This module scans the
-  source text for table headers and dotted keys, records every key path in order of first
-  appearance, and orders a decoded table's keys by it.
+  source text for table headers, dotted keys and the keys inside inline tables (at any depth,
+  dotted or not), records every key path in order of first appearance, and orders a decoded
+  table's keys by it.
 
-  Keys inside inline tables (`engines = { a = {...} }`) are not recorded; they sort after
-  every recorded key, in Elixir term order.
+  Inline tables inside arrays are not recorded (`a = [{ x = 1 }]` has no single `a.x`); such
+  keys sort after every recorded key, in Elixir term order.
   """
 
   @type path :: [String.t()]
@@ -61,12 +62,68 @@ defmodule Cornerman.TomlOrder do
   defp scan_line(text, table, acc) do
     case read_key(text, []) do
       {:ok, key, <<"=", rest::binary>>} ->
-        scan_line(skip_value(rest, 0), table, [table ++ key | acc])
+        path = table ++ key
+        {rest, acc} = value(trim_blank(rest), path, [path | acc])
+        scan_line(skip_value(rest, 0), table, acc)
 
       _ ->
         scan_line(skip_line(text), table, acc)
     end
   end
+
+  # A value about to be skipped, except an inline table: its keys are keys of the document
+  # too (`engines = { zeta = {...} }` declares `engines.zeta`), so they are recorded. Returns
+  # the text after what it consumed and the accumulated paths.
+  defp value(<<"{", rest::binary>>, path, acc), do: inline_table(rest, path, acc)
+  defp value(text, _path, acc), do: {text, acc}
+
+  # Reads `key = value` pairs up to the closing brace. Keys may be dotted, values may be inline
+  # tables themselves. Malformed text stops the scan quietly: the decoder has already rejected
+  # invalid TOML by the time order matters.
+  defp inline_table(text, base, acc) do
+    case skip_blank_lines(text) do
+      <<"}", rest::binary>> ->
+        {rest, acc}
+
+      <<",", rest::binary>> ->
+        inline_table(rest, base, acc)
+
+      "" ->
+        {"", acc}
+
+      text ->
+        case read_key(text, []) do
+          {:ok, key, <<"=", rest::binary>>} ->
+            path = base ++ key
+            {rest, acc} = value(trim_blank(rest), path, [path | acc])
+            inline_table(skip_element(rest, 0), base, acc)
+
+          _ ->
+            {text, acc}
+        end
+    end
+  end
+
+  defp skip_blank_lines(<<c, rest::binary>>) when c in [?\s, ?\t, ?\r, ?\n],
+    do: skip_blank_lines(rest)
+
+  defp skip_blank_lines(<<?#, rest::binary>>), do: skip_blank_lines(skip_line(rest))
+  defp skip_blank_lines(text), do: text
+
+  # Skips one value inside an inline table, stopping at the `,` or `}` that ends it.
+  defp skip_element(<<>>, _depth), do: <<>>
+  defp skip_element(<<c, _::binary>> = text, 0) when c in [?,, ?}], do: text
+
+  defp skip_element(<<"\"\"\"", rest::binary>>, d),
+    do: rest |> multiline(~S(""")) |> skip_element(d)
+
+  defp skip_element(<<"'''", rest::binary>>, d), do: rest |> multiline("'''") |> skip_element(d)
+  defp skip_element(<<"\"", rest::binary>>, d), do: rest |> skip_basic() |> skip_element(d)
+  defp skip_element(<<"'", rest::binary>>, d), do: rest |> skip_to("'") |> skip_element(d)
+  defp skip_element(<<"#", rest::binary>>, d), do: rest |> skip_comment() |> skip_element(d)
+  defp skip_element(<<c, rest::binary>>, d) when c in [?[, ?{], do: skip_element(rest, d + 1)
+  defp skip_element(<<c, rest::binary>>, d) when c in [?], ?}], do: skip_element(rest, d - 1)
+  defp skip_element(<<_, rest::binary>>, d), do: skip_element(rest, d)
 
   defp header(text, acc) do
     case read_key(text, []) do

@@ -8,6 +8,9 @@ defmodule Cornerman.CLI.Args do
   cases where argparse itself prints and exits (help, usage errors).
   """
 
+  alias Cornerman.CLI.Argparse
+  alias Cornerman.Py
+
   @commands ~w(self-update run ask lint hud db models catalog demo install-agent uninstall-agent)
 
   @top_usage """
@@ -58,8 +61,22 @@ defmodule Cornerman.CLI.Args do
                                        deliberate bakeoff
                """
 
-  @top_options ["--help", "--config", "--no-self-update"]
-  @lint_options ["--help", "--allow-noncanonical-route"]
+  @top_parser %{
+    options: [
+      %{id: :help, strings: ["-h", "--help"], nargs: 0},
+      %{id: :config, strings: ["--config"], nargs: 1},
+      %{id: :no_self_update, strings: ["--no-self-update"], nargs: 0}
+    ],
+    positional: {:command, :parser}
+  }
+
+  @lint_parser %{
+    options: [
+      %{id: :help, strings: ["-h", "--help"], nargs: 0},
+      %{id: :allow_noncanonical_route, strings: ["--allow-noncanonical-route"], nargs: 0}
+    ],
+    positional: {:manifest, :one}
+  }
 
   @type result ::
           {:ok, String.t(), map()}
@@ -69,163 +86,67 @@ defmodule Cornerman.CLI.Args do
   @spec parse([String.t()]) :: result()
   def parse(argv) do
     argv = Enum.reject(argv, &(&1 == "--no-self-update"))
-    top(argv, %{config: nil, extras: []})
-  end
 
-  # --- top-level parser --------------------------------------------------------------------
-
-  defp top([], _opts), do: top_error("the following arguments are required: command")
-
-  defp top(["--" | rest], opts), do: command(rest, opts)
-
-  defp top(["-h" | _], _opts), do: {:exit, 0, @top_help, ""}
-
-  defp top(["--config" | rest], opts), do: config(rest, opts)
-  defp top(["--config=" <> value | rest], opts), do: top(rest, %{opts | config: value})
-
-  defp top(["-" <> _ = arg | rest], opts) do
-    case long_option(arg, @top_options) do
-      {:ok, "--help", nil} ->
-        {:exit, 0, @top_help, ""}
-
-      {:ok, "--config", nil} ->
-        config(rest, opts)
-
-      {:ok, "--config", value} ->
-        top(rest, %{opts | config: value})
-
-      {:ok, "--no-self-update", nil} ->
-        top(rest, opts)
-
-      {:ok, option, value} ->
-        top_error("argument #{option_display(option)}: ignored explicit argument '#{value}'")
-
-      {:ambiguous, matches} ->
-        top_error(ambiguous(arg, matches))
-
-      :unknown ->
-        top(rest, %{opts | extras: opts.extras ++ [arg]})
+    case Argparse.parse(@top_parser, argv) do
+      :help -> {:exit, 0, @top_help, ""}
+      {:error, message} -> top_error(message)
+      {:ok, %{positional: nil}} -> top_error("the following arguments are required: command")
+      {:ok, top} -> command(top)
     end
   end
 
-  defp top(argv, opts), do: command(argv, opts)
+  # argparse hands the subcommand everything after its name; a subcommand's own errors
+  # come before the top-level "unrecognized arguments" check.
+  defp command(%{positional: [name | rest]} = top) do
+    config = Map.get(top.values, :config)
 
-  defp config([value | rest], opts) when value != "--", do: top(rest, %{opts | config: value})
-  defp config(_rest, _opts), do: top_error("argument --config: expected one argument")
-
-  defp command([], _opts), do: top_error("the following arguments are required: command")
-
-  defp command([name | rest], opts) do
     cond do
       name == "lint" ->
-        lint(
-          rest,
-          %{manifest: nil, allow_noncanonical_route: false, config: opts.config},
-          # argparse reports top-level extras first; lint's extras list is built reversed.
-          Enum.reverse(opts.extras),
-          false
-        )
+        lint(rest, config, top.extras)
 
-      name in @commands and opts.extras == [] ->
-        {:ok, name, Map.put(opts, :argv, rest)}
+      name in @commands and top.extras == [] ->
+        {:ok, name, %{config: config, argv: rest}}
 
       name in @commands ->
-        top_error("unrecognized arguments: #{Enum.join(opts.extras, " ")}")
+        top_error("unrecognized arguments: #{Enum.join(top.extras, " ")}")
 
       true ->
         top_error(
-          "argument command: invalid choice: '#{name}' (choose from #{Enum.join(@commands, ", ")})"
+          "argument command: invalid choice: #{Py.repr(name)} (choose from #{Enum.join(@commands, ", ")})"
         )
+    end
+  end
+
+  defp lint(argv, config, top_extras) do
+    case Argparse.parse(@lint_parser, argv) do
+      :help ->
+        {:exit, 0, @lint_help, ""}
+
+      {:error, message} ->
+        lint_error(message)
+
+      {:ok, %{positional: nil}} ->
+        lint_error("the following arguments are required: manifest")
+
+      {:ok, %{positional: manifest, values: values, extras: extras}} ->
+        # argparse reports top-level extras first.
+        case top_extras ++ extras do
+          [] ->
+            {:ok, "lint",
+             %{
+               manifest: manifest,
+               allow_noncanonical_route: Map.get(values, :allow_noncanonical_route, false),
+               config: config
+             }}
+
+          extras ->
+            top_error("unrecognized arguments: #{Enum.join(extras, " ")}")
+        end
     end
   end
 
   defp top_error(message), do: {:exit, 2, "", @top_usage <> "cornerman: error: #{message}\n"}
 
-  # --- lint subparser ----------------------------------------------------------------------
-
-  defp lint([], opts, extras, _positional_only), do: finish_lint(opts, Enum.reverse(extras))
-
-  defp lint(["--" | rest], opts, extras, false), do: lint(rest, opts, extras, true)
-
-  defp lint(["-h" | _], _opts, _extras, false), do: {:exit, 0, @lint_help, ""}
-
-  defp lint([arg | rest], opts, extras, false) when arg != "-" do
-    if option_like?(arg) do
-      case long_option(arg, @lint_options) do
-        {:ok, "--help", nil} ->
-          {:exit, 0, @lint_help, ""}
-
-        {:ok, "--allow-noncanonical-route", nil} ->
-          lint(rest, %{opts | allow_noncanonical_route: true}, extras, false)
-
-        {:ok, option, value} ->
-          lint_error("argument #{option_display(option)}: ignored explicit argument '#{value}'")
-
-        {:ambiguous, matches} ->
-          lint_error(ambiguous(arg, matches))
-
-        :unknown ->
-          lint(rest, opts, [arg | extras], false)
-      end
-    else
-      positional(arg, rest, opts, extras, false)
-    end
-  end
-
-  defp lint([arg | rest], opts, extras, positional_only),
-    do: positional(arg, rest, opts, extras, positional_only)
-
-  defp positional(arg, rest, %{manifest: nil} = opts, extras, positional_only),
-    do: lint(rest, %{opts | manifest: arg}, extras, positional_only)
-
-  defp positional(arg, rest, opts, extras, positional_only),
-    do: lint(rest, opts, [arg | extras], positional_only)
-
-  defp finish_lint(%{manifest: nil}, _extras),
-    do: lint_error("the following arguments are required: manifest")
-
-  defp finish_lint(opts, []), do: {:ok, "lint", opts}
-
-  defp finish_lint(_opts, extras),
-    do: top_error("unrecognized arguments: #{Enum.join(extras, " ")}")
-
   defp lint_error(message),
     do: {:exit, 2, "", @lint_usage <> "cornerman lint: error: #{message}\n"}
-
-  # --- option matching ---------------------------------------------------------------------
-
-  # argparse treats "-5" / "-.5" as positionals when no option looks like a number.
-  defp option_like?(arg),
-    do: String.starts_with?(arg, "-") and not Regex.match?(~r/\A-\d+\z|\A-\d*\.\d+\z/, arg)
-
-  # A long option or an unambiguous prefix of one, optionally with "=value".
-  defp long_option("--" <> _ = arg, options) do
-    {name, value} =
-      case String.split(arg, "=", parts: 2) do
-        [name, value] -> {name, value}
-        [name] -> {name, nil}
-      end
-
-    cond do
-      name in options ->
-        {:ok, name, value}
-
-      true ->
-        case Enum.filter(options, &String.starts_with?(&1, name)) do
-          [match] -> {:ok, match, value}
-          [] -> :unknown
-          matches -> {:ambiguous, matches}
-        end
-    end
-  end
-
-  defp long_option(_arg, _options), do: :unknown
-
-  defp option_display("--help"), do: "-h/--help"
-  defp option_display(option), do: option
-
-  defp ambiguous(arg, matches) do
-    name = arg |> String.split("=", parts: 2) |> hd()
-    "ambiguous option: #{name} could match #{Enum.join(matches, ", ")}"
-  end
 end

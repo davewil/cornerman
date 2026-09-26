@@ -9,6 +9,7 @@ defmodule Cornerman.Manifest do
   """
 
   alias Cornerman.Py
+  alias Cornerman.Py.{Dict, Text}
 
   defmodule Task do
     @moduledoc "One validated task (Ringer's `TaskSpec`)."
@@ -86,51 +87,22 @@ defmodule Cornerman.Manifest do
     end
   end
 
-  # Later duplicate keys win, as with Python's json module.
-  defp decode_json(bytes) do
-    finish = fn pairs, old_acc -> {pairs |> Enum.reverse() |> Map.new(), old_acc} end
+  defp decode_json(bytes), do: Py.Json.decode(bytes)
 
-    case JSON.decode(bytes, [], object_finish: finish) do
-      {:error, reason} -> {:error, json_error(reason)}
-      {value, _acc, rest} -> trailing(value, rest, byte_size(bytes) - byte_size(rest))
-    end
-  end
-
-  # Python allows trailing JSON whitespace and nothing else.
-  defp trailing(value, <<c, rest::binary>>, offset) when c in [?\s, ?\t, ?\n, ?\r],
-    do: trailing(value, rest, offset + 1)
-
-  defp trailing(value, "", _offset), do: {:ok, value}
-
-  defp trailing(_value, <<c, _::binary>>, offset),
-    do: {:error, json_error({:invalid_byte, offset, c})}
-
-  # The wording of Elixir's JSON.DecodeError (DIVERGENCES.toml: lint/error-invalid-json).
-  defp json_error({:unexpected_end, offset}),
-    do: "unexpected end of JSON binary at position (byte offset) #{offset}"
-
-  defp json_error({:invalid_byte, offset, byte}),
-    do: "invalid byte #{byte} at position (byte offset) #{offset}"
-
-  defp json_error({:unexpected_sequence, offset, bytes}),
-    do: "unexpected sequence #{inspect(bytes)} at position (byte offset) #{offset}"
-
-  defp json_error(other), do: "invalid JSON: #{inspect(other)}"
-
-  defp object?(data) when is_map(data), do: :ok
+  defp object?(%Dict{}), do: :ok
   defp object?(_), do: {:error, "manifest root must be a JSON object"}
 
   @doc "Validates a decoded manifest object (Ringer's `Manifest.from_obj`)."
-  @spec from_map(map()) :: {:ok, t()} | {:error, String.t()}
+  @spec from_map(Dict.t()) :: {:ok, t()} | {:error, String.t()}
   def from_map(obj) do
     with {:ok, run_name} <- run_name(obj),
          {:ok, workdir} <- workdir(obj),
          {:ok, max_parallel} <-
-           positive_int(Map.get(obj, "max_parallel", 1), "max_parallel must be positive"),
-         repo = repo(obj),
+           positive_int(Dict.get(obj, "max_parallel", 1), "max_parallel must be positive"),
+         {:ok, repo} <- repo(obj),
          {:ok, tasks} <- tasks(obj),
          :ok <- unique_keys(tasks),
-         worktrees = Py.truthy?(Map.get(obj, "worktrees", false)),
+         worktrees = Py.truthy?(Dict.get(obj, "worktrees", false)),
          :ok <- logs_collisions(worktrees, workdir, tasks) do
       {:ok,
        %__MODULE__{
@@ -145,7 +117,7 @@ defmodule Cornerman.Manifest do
   end
 
   defp run_name(obj) do
-    case obj |> Map.get("run_name", "") |> Py.str() |> Py.strip() do
+    case obj |> Dict.get("run_name", "") |> Py.str() |> Py.strip() do
       "" ->
         {:error, "run_name is required"}
 
@@ -158,13 +130,13 @@ defmodule Cornerman.Manifest do
   end
 
   defp workdir(obj) do
-    raw = Map.get(obj, "workdir")
-    if Py.truthy?(raw), do: {:ok, Py.resolve(Py.str(raw))}, else: {:error, "workdir is required"}
+    raw = Dict.get(obj, "workdir")
+    if Py.truthy?(raw), do: Py.resolve(Py.str(raw)), else: {:error, "workdir is required"}
   end
 
   defp repo(obj) do
-    raw = Map.get(obj, "repo")
-    if Py.truthy?(raw), do: Py.resolve(Py.str(raw)), else: nil
+    raw = Dict.get(obj, "repo")
+    if Py.truthy?(raw), do: Py.resolve(Py.str(raw)), else: {:ok, nil}
   end
 
   defp positive_int(raw, message) do
@@ -176,7 +148,7 @@ defmodule Cornerman.Manifest do
   end
 
   defp tasks(obj) do
-    case Map.get(obj, "tasks") do
+    case Dict.get(obj, "tasks") do
       [_ | _] = raw -> collect(raw, &task/1)
       _ -> {:error, "tasks must be a non-empty list"}
     end
@@ -212,19 +184,38 @@ defmodule Cornerman.Manifest do
   defp logs_collisions(true, workdir, tasks) do
     logs = Path.join(workdir, "logs")
 
-    collisions =
-      for task <- tasks,
-          taskdir = Path.expand(join_path(workdir, task.key)),
-          taskdir == logs or String.starts_with?(taskdir, logs <> "/"),
-          do: task.key
+    with {:ok, taskdirs} <- task_dirs(workdir, tasks) do
+      collisions =
+        for {task, taskdir} <- taskdirs,
+            taskdir == logs or String.starts_with?(taskdir, logs <> "/"),
+            do: task.key
 
-    case collisions do
-      [] ->
-        :ok
+      case collisions do
+        [] ->
+          :ok
 
-      keys ->
-        {:error,
-         "task key(s) collide with reserved worktree logs directory 'logs': #{Enum.join(keys, ", ")}"}
+        keys ->
+          {:error,
+           "task key(s) collide with reserved worktree logs directory 'logs': #{Enum.join(keys, ", ")}"}
+      end
+    end
+  end
+
+  # Ringer resolves every task directory, and resolving a path with a lone surrogate in the
+  # key raises before any collision is reported.
+  defp task_dirs(workdir, tasks) do
+    tasks
+    |> Enum.reduce_while({:ok, []}, fn task, {:ok, acc} ->
+      taskdir = Path.expand(join_path(workdir, task.key))
+
+      case Text.encode_error(taskdir) do
+        nil -> {:cont, {:ok, [{task, taskdir} | acc]}}
+        message -> {:halt, {:error, message}}
+      end
+    end)
+    |> case do
+      {:ok, acc} -> {:ok, Enum.reverse(acc)}
+      error -> error
     end
   end
 
@@ -234,14 +225,17 @@ defmodule Cornerman.Manifest do
 
   # --- tasks (Ringer's TaskSpec.from_obj) ------------------------------------------------
 
-  defp task(obj) when is_map(obj) do
+  defp task(%Dict{} = obj) do
     with {:ok, key} <- task_key(obj),
          {:ok, spec} <- required_string(obj, "spec", key),
          {:ok, check} <- required_string(obj, "check", key),
          {:ok, expect_files} <- expect_files(obj, key),
          {:ok, engine} <- engine(obj, key),
          {:ok, timeout_s} <-
-           positive_int(Map.get(obj, "timeout_s", 900), "task #{key}: timeout_s must be positive"),
+           positive_int(
+             Dict.get(obj, "timeout_s", 900),
+             "task #{key}: timeout_s must be positive"
+           ),
          {:ok, max_attempts} <- max_attempts(obj, key),
          {:ok, engine_args} <- engine_args(obj, key),
          {:ok, verified} <-
@@ -254,7 +248,7 @@ defmodule Cornerman.Manifest do
          {:ok, model} <- optional_string(obj, "model", key, " (e.g. 'openrouter/z-ai/glm-5.2')"),
          {:ok, task_type} <- optional_string(obj, "task_type", key, ""),
          {:ok, redact_spec} <-
-           require_bool(Map.get(obj, "redact_spec", false), key, "redact_spec") do
+           require_bool(Dict.get(obj, "redact_spec", false), key, "redact_spec") do
       {:ok,
        %Task{
          key: key,
@@ -265,7 +259,7 @@ defmodule Cornerman.Manifest do
          timeout_s: timeout_s,
          max_attempts: max_attempts,
          redact_spec: redact_spec,
-         full_access: Py.truthy?(Map.get(obj, "full_access", false)),
+         full_access: Py.truthy?(Dict.get(obj, "full_access", false)),
          engine_args: engine_args,
          verified: Py.strip(verified),
          model: Py.strip(model),
@@ -278,7 +272,7 @@ defmodule Cornerman.Manifest do
   defp task(obj), do: {:error, "'#{Py.type_name(obj)}' object has no attribute 'get'"}
 
   defp task_key(obj) do
-    case Map.get(obj, "key", "") do
+    case Dict.get(obj, "key", "") do
       raw when is_binary(raw) ->
         case Py.strip(raw) do
           "" -> {:error, "task key is required"}
@@ -291,7 +285,7 @@ defmodule Cornerman.Manifest do
   end
 
   defp required_string(obj, field, key) do
-    case Map.get(obj, field, "") do
+    case Dict.get(obj, field, "") do
       "" -> {:error, "task #{key}: #{field} is required"}
       value when is_binary(value) -> {:ok, value}
       _ -> {:error, "task #{key}: #{field} must be a string"}
@@ -299,21 +293,21 @@ defmodule Cornerman.Manifest do
   end
 
   defp expect_files(obj, key) do
-    case Map.get(obj, "expect_files", []) do
+    case Dict.get(obj, "expect_files", []) do
       files when is_list(files) -> {:ok, files}
       _ -> {:error, "task #{key}: expect_files must be a list"}
     end
   end
 
   defp engine(obj, key) do
-    case obj |> Map.get("engine", "codex") |> Py.str() |> Py.strip() do
+    case obj |> Dict.get("engine", "codex") |> Py.str() |> Py.strip() do
       "" -> {:error, "task #{key}: engine must not be empty"}
       engine -> {:ok, engine}
     end
   end
 
   defp max_attempts(obj, key) do
-    case Map.get(obj, "max_attempts", 2) do
+    case Dict.get(obj, "max_attempts", 2) do
       n when is_integer(n) and n > 0 ->
         {:ok, n}
 
@@ -326,7 +320,7 @@ defmodule Cornerman.Manifest do
   end
 
   defp engine_args(obj, key) do
-    case Map.get(obj, "engine_args", []) do
+    case Dict.get(obj, "engine_args", []) do
       args when is_list(args) ->
         if Enum.all?(args, &is_binary/1),
           do: {:ok, args},
@@ -338,7 +332,7 @@ defmodule Cornerman.Manifest do
   end
 
   defp optional_string(obj, field, key, hint) do
-    case Map.get(obj, field, "") do
+    case Dict.get(obj, field, "") do
       value when is_binary(value) -> {:ok, value}
       _ -> {:error, "task #{key}: #{field} must be a string#{hint}"}
     end

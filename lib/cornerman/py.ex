@@ -8,8 +8,14 @@ defmodule Cornerman.Py do
   byte-for-byte parity needs the Python behaviour rather than the nearest Elixir function.
 
   Values are decoded JSON or TOML: binaries, integers, floats, booleans, `nil`, lists and
-  (non-struct) maps, plus TOML's `:infinity`, `:neg_infinity`, `:nan` and date/time structs.
+  dicts (`Cornerman.Py.Dict` from JSON, plain maps from TOML), plus the float atoms
+  `:infinity`, `:neg_infinity` and `:nan` and TOML's date/time structs.
   """
+
+  alias Cornerman.Py.{Dict, Pwd, Text, Unicode}
+
+  # sys.get_int_max_str_digits() default.
+  @max_int_digits 4300
 
   # Characters for which Python's str.isspace() is true (the set str.strip() removes).
   @whitespace [
@@ -43,23 +49,23 @@ defmodule Cornerman.Py do
   @doc "Python's `str.strip(chars)`."
   @spec strip(String.t(), String.t()) :: String.t()
   def strip(text, chars) do
-    set = String.to_charlist(chars)
+    set = Text.codepoints(chars)
     strip_chars(text, &(&1 in set))
   end
 
   defp strip_chars(text, drop?) do
     text
-    |> String.to_charlist()
+    |> Text.codepoints()
     |> Enum.drop_while(drop?)
     |> Enum.reverse()
     |> Enum.drop_while(drop?)
     |> Enum.reverse()
-    |> List.to_string()
+    |> Text.from_codepoints()
   end
 
   @doc "Python's `len()` of a str: code points, not graphemes."
   @spec len(String.t()) :: non_neg_integer()
-  def len(text), do: text |> String.to_charlist() |> length()
+  def len(text), do: text |> Text.codepoints() |> length()
 
   @doc "Python's `bool()` of a decoded value."
   @spec truthy?(term()) :: boolean()
@@ -69,6 +75,7 @@ defmodule Cornerman.Py do
   def truthy?(value) when is_float(value), do: value != 0.0
   def truthy?(""), do: false
   def truthy?([]), do: false
+  def truthy?(%Dict{} = value), do: Dict.size(value) > 0
   def truthy?(value) when is_map(value) and not is_struct(value), do: map_size(value) > 0
   def truthy?(_), do: true
 
@@ -93,9 +100,8 @@ defmodule Cornerman.Py do
   def str(value), do: repr(value)
 
   @doc """
-  Python's `repr()`. Dicts print in Elixir map order, not insertion order: decoded objects
-  lose their key order (noted in notes.md; only reachable through an error message about a
-  malformed field whose value is itself an object).
+  Python's `repr()`. A JSON object (`Cornerman.Py.Dict`) prints in insertion order; a TOML
+  table is a plain map and prints in key order.
   """
   @spec repr(term()) :: String.t()
   def repr(nil), do: "None"
@@ -109,10 +115,12 @@ defmodule Cornerman.Py do
   def repr(value) when is_binary(value), do: string_repr(value)
   def repr(value) when is_list(value), do: "[" <> Enum.map_join(value, ", ", &repr/1) <> "]"
   def repr(%Date{} = d), do: "datetime.date(#{d.year}, #{d.month}, #{d.day})"
+  def repr(%Dict{} = value), do: dict_repr(Dict.to_list(value))
   def repr(value) when is_struct(value), do: to_string(value)
+  def repr(value) when is_map(value), do: dict_repr(Map.to_list(value))
 
-  def repr(value) when is_map(value) do
-    "{" <> Enum.map_join(value, ", ", fn {k, v} -> repr(k) <> ": " <> repr(v) end) <> "}"
+  defp dict_repr(pairs) do
+    "{" <> Enum.map_join(pairs, ", ", fn {k, v} -> repr(k) <> ": " <> repr(v) end) <> "}"
   end
 
   defp string_repr(text) do
@@ -121,7 +129,7 @@ defmodule Cornerman.Py do
 
     body =
       text
-      |> String.to_charlist()
+      |> Text.codepoints()
       |> Enum.map(&escape_char(&1, quote_char))
 
     IO.iodata_to_binary([quote_char, body, quote_char])
@@ -135,7 +143,7 @@ defmodule Cornerman.Py do
 
   defp escape_char(c, _) do
     cond do
-      printable?(c) -> <<c::utf8>>
+      Unicode.printable?(c) -> <<c::utf8>>
       c < 0x100 -> "\\x" <> hex(c, 2)
       c < 0x10000 -> "\\u" <> hex(c, 4)
       true -> "\\U" <> hex(c, 8)
@@ -144,14 +152,6 @@ defmodule Cornerman.Py do
 
   defp hex(c, width),
     do: c |> Integer.to_string(16) |> String.downcase() |> String.pad_leading(width, "0")
-
-  # str.isprintable(): false for control, format, separator (other than space), surrogate
-  # and private-use code points. This is an approximation of the Unicode category table.
-  defp printable?(c) when c < 0x20 or c in 0x7F..0xA0 or c == 0xAD, do: false
-  defp printable?(c) when c in @whitespace and c != ?\s, do: false
-  defp printable?(c) when c in 0x200B..0x200F or c in 0x2060..0x2064 or c == 0xFEFF, do: false
-  defp printable?(c) when c in 0xD800..0xDFFF or c in 0xE000..0xF8FF, do: false
-  defp printable?(_), do: true
 
   @doc "Python's `repr()` of a float (shortest round-trip digits, Python layout)."
   @spec float_repr(float()) :: String.t()
@@ -213,10 +213,16 @@ defmodule Cornerman.Py do
   def int(:nan), do: {:error, "cannot convert float NaN to integer"}
 
   def int(value) when is_binary(value) do
-    case Regex.run(~r/\A([+-]?)([0-9](?:_?[0-9])*)\z/, strip(value)) do
+    case Regex.run(~r/\A([+-]?)([0-9](?:_?[0-9])*)\z/, value |> to_ascii_digits() |> strip()) do
       [_, sign, digits] ->
-        n = digits |> String.replace("_", "") |> String.to_integer()
-        {:ok, if(sign == "-", do: -n, else: n)}
+        digits = String.replace(digits, "_", "")
+
+        if byte_size(digits) > @max_int_digits do
+          {:error, int_digit_limit_message(byte_size(digits))}
+        else
+          n = String.to_integer(digits)
+          {:ok, if(sign == "-", do: -n, else: n)}
+        end
 
       nil ->
         {:error, "invalid literal for int() with base 10: #{repr(value)}"}
@@ -226,6 +232,22 @@ defmodule Cornerman.Py do
   def int(value) do
     {:error,
      "int() argument must be a string, a bytes-like object or a real number, not '#{int_type_name(value)}'"}
+  end
+
+  # CPython converts every Unicode decimal digit (category Nd) to its ASCII digit before
+  # parsing; the whitespace it strips is handled by `strip/1`.
+  defp to_ascii_digits(text) do
+    text
+    |> Text.codepoints()
+    |> Enum.map(fn c -> if digit = Unicode.decimal_value(c), do: ?0 + digit, else: c end)
+    |> Text.from_codepoints()
+  end
+
+  @doc "The ValueError Python raises for an integer literal of more than 4300 digits."
+  @spec int_digit_limit_message(pos_integer()) :: String.t()
+  def int_digit_limit_message(digits) do
+    "Exceeds the limit (#{@max_int_digits} digits) for integer string conversion: " <>
+      "value has #{digits} digits; use sys.set_int_max_str_digits() to increase the limit"
   end
 
   defp int_type_name(%Date{}), do: "datetime.date"
@@ -307,17 +329,74 @@ defmodule Cornerman.Py do
     end
   end
 
-  @doc "`Path(text).expanduser()` for the forms Ringer meets: `~` and `~/...`."
-  @spec expanduser(String.t()) :: String.t()
-  def expanduser("~"), do: home()
-  def expanduser("~/" <> rest), do: Path.join(home(), rest)
-  def expanduser(text), do: text
+  @no_home "Could not determine home directory."
 
-  defp home, do: System.get_env("HOME") || System.user_home!()
+  @doc """
+  `str(Path(text).expanduser())`: `{:ok, path}` or `{:error, message}` with the text of the
+  exception Python raises (RuntimeError "Could not determine home directory." for `~` or
+  `~user` that cannot be resolved).
 
-  @doc "`Path(text).expanduser().resolve()`, lexically (symlinks are not followed)."
-  @spec resolve(String.t()) :: String.t()
-  def resolve(text), do: text |> expanduser() |> Path.expand()
+  Like pathlib, this normalises the path first and expands only when its first segment
+  starts with `~`, so `./~root/x` and `~root//x` expand while `/~root` and `a/~root` do not.
+  `~` is `$HOME` (or the current user's home when unset) and `~name` is that user's home
+  directory in the system user database (`Cornerman.Py.Pwd`).
+  """
+  @spec expanduser(String.t()) :: {:ok, String.t()} | {:error, String.t()}
+  def expanduser(text) do
+    path = path_str(text)
+
+    case String.split(path, "/") do
+      ["~" <> name | rest] ->
+        with {:ok, home} <- home_dir(name) do
+          {:ok, path_str(Enum.join([home | rest], "/"))}
+        end
+
+      _ ->
+        {:ok, path}
+    end
+  end
+
+  # posixpath.expanduser for the first segment, then pathlib's check that it expanded.
+  defp home_dir(name) do
+    found =
+      case name do
+        "" -> current_home()
+        name -> Pwd.home_of(name)
+      end
+
+    case found do
+      {:ok, home} -> resolved_home(home |> String.trim_trailing("/") |> orslash())
+      {:error, message} -> {:error, message}
+      :unknown -> {:error, @no_home}
+    end
+  end
+
+  defp current_home do
+    case System.get_env("HOME") do
+      nil -> Pwd.current_home()
+      home -> {:ok, home}
+    end
+  end
+
+  # posixpath.expanduser returns "/" for a home of "/" or "" (after stripping the slashes).
+  defp orslash(""), do: "/"
+  defp orslash(home), do: home
+
+  defp resolved_home("~" <> _), do: {:error, @no_home}
+  defp resolved_home(home), do: {:ok, home}
+
+  @doc """
+  `Path(text).expanduser().resolve()`, lexically (symlinks are not followed). A path holding a
+  lone surrogate cannot be encoded for the filesystem: Python's `UnicodeEncodeError`, with the
+  position counted in the lexical path (Python counts in the symlink-resolved one).
+  """
+  @spec resolve(String.t()) :: {:ok, String.t()} | {:error, String.t()}
+  def resolve(text) do
+    with {:ok, path} <- expanduser(text) do
+      path = Path.expand(path)
+      if message = Text.encode_error(path), do: {:error, message}, else: {:ok, path}
+    end
+  end
 
   @doc """
   `shutil.which(cmd, path=search_path)` for a bare command name: the first entry of the

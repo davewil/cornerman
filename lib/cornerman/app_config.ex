@@ -81,13 +81,11 @@ defmodule Cornerman.AppConfig do
   """
   @spec load(String.t() | nil) :: {:ok, t()} | :error
   def load(path \\ nil) do
-    env_path = env_config_path()
-    config_path = path || env_path || default_config_path()
-    explicit = path != nil or env_path != nil
-
-    with {:ok, text} <- read(config_path, explicit),
+    with {:ok, config_path, explicit} <- config_path(path),
+         {:ok, text} <- read(config_path, explicit),
          {:ok, data} <- decode(text),
-         {:ok, _} <- check_state_dir(data),
+         {:ok, _} <- Py.expanduser("~"),
+         {:ok, _} <- expand_path(Map.get(data, "state_dir")),
          {:ok, _} <- positive(Map.get(data, "dashboard_port_base", 8787)),
          :ok <- check_hud(Map.get(data, "hud")),
          :ok <- check_eval(Map.get(data, "eval")),
@@ -95,7 +93,8 @@ defmodule Cornerman.AppConfig do
          order = TomlOrder.paths(text),
          {:ok, engines} <- load_engines(raw_engines, order),
          :ok <- check_table(Map.get(data, "artifact")),
-         :ok <- check_update(Map.get(data, "update")) do
+         :ok <- check_update(Map.get(data, "update")),
+         :ok <- check_paths(data) do
       names = configured_engine_names(raw_engines, order)
       {:ok, %__MODULE__{engines: engines, engine_bin_diagnostics: diagnostics(engines, names)}}
     else
@@ -103,21 +102,65 @@ defmodule Cornerman.AppConfig do
     end
   end
 
+  # `--config`, else `$RINGER_CONFIG`, else the XDG default. Only the first two are explicit
+  # (a missing file is an error). Expanding `~` or `~user` in the environment values can fail.
+  defp config_path(nil) do
+    with {:ok, env_path} <- env_config_path() do
+      case env_path do
+        nil -> with {:ok, default} <- default_config_path(), do: {:ok, default, false}
+        path -> {:ok, path, true}
+      end
+    end
+  end
+
+  defp config_path(path), do: {:ok, path, true}
+
   defp env_config_path do
     case System.get_env("RINGER_CONFIG") do
-      nil -> nil
-      value -> if Py.strip(value) == "", do: nil, else: Py.resolve(value)
+      nil -> {:ok, nil}
+      value -> if Py.strip(value) == "", do: {:ok, nil}, else: Py.resolve(value)
     end
   end
 
   defp default_config_path do
     base =
       case System.get_env("XDG_CONFIG_HOME") do
-        value when value in [nil, ""] -> Path.join(Py.expanduser("~"), ".config")
-        value -> Py.expanduser(value)
+        value when value in [nil, ""] ->
+          with {:ok, home} <- Py.expanduser("~"), do: {:ok, Path.join(home, ".config")}
+
+        value ->
+          Py.expanduser(value)
       end
 
-    Path.join([base, "ringer", "config.toml"])
+    with {:ok, base} <- base, do: {:ok, Path.join([base, "ringer", "config.toml"])}
+  end
+
+  # `expand_path` / `optional_path`: a configured path with `~` expanded and made absolute.
+  # An absent value has no path to expand.
+  defp expand_path(nil), do: {:ok, nil}
+  defp expand_path(value), do: Py.resolve(Py.str(value))
+
+  defp optional_path(value) do
+    case optional_string(value) do
+      nil -> {:ok, nil}
+      text -> Py.resolve(text)
+    end
+  end
+
+  # Every configured path Ringer expands while loading; one that cannot be expanded (`~user`
+  # of an unknown user) makes the whole config unusable.
+  defp check_paths(data) do
+    eval = Map.get(data, "eval") || %{}
+    artifact = Map.get(data, "artifact") || %{}
+
+    with {:ok, _} <- optional_path(Map.get(data, "hud_app_path")),
+         {:ok, _} <- expand_path(Map.get(eval, "jsonl_path")),
+         {:ok, _} <- optional_path(get_in(eval, ["postgres", "env_file"])),
+         {:ok, _} <- expand_path(Map.get(artifact, "index_out")) do
+      :ok
+    else
+      _ -> :error
+    end
   end
 
   # A missing default config means defaults; a missing explicit one is an error.
@@ -139,8 +182,6 @@ defmodule Cornerman.AppConfig do
   end
 
   defp table?(value), do: is_map(value) and not is_struct(value)
-
-  defp check_state_dir(data), do: {:ok, Map.get(data, "state_dir")}
 
   defp positive(raw) do
     case Py.int(raw) do

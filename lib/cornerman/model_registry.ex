@@ -46,7 +46,11 @@ defmodule Cornerman.ModelRegistry do
         Path.join(@root, "vendor/ringer-py/registry/model-identity.toml")
 
       value ->
-        Py.resolve(value)
+        # An unresolvable `~user` is left as written: no such file, so the empty registry.
+        case Py.resolve(value) do
+          {:ok, path} -> path
+          {:error, _} -> value
+        end
     end
   end
 

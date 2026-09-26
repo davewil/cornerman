@@ -13,20 +13,30 @@ defmodule Cornerman.Lint do
   All findings for `manifest`, in Ringer's order. Options: `:allow_noncanonical_route`
   (skip the registry rule) and `:registry` (a loaded `ModelRegistry`, loaded lazily
   otherwise).
+
+  Lint can fail instead of reporting: Ringer expands `~user` in every `expect_files` entry
+  and Python raises when a user does not exist, so an unresolvable `~user` is
+  `{:error, message}`, not a finding.
   """
-  @spec findings(Manifest.t(), keyword()) :: [String.t()]
+  @spec findings(Manifest.t(), keyword()) :: {:ok, [String.t()]} | {:error, String.t()}
   def findings(%Manifest{} = manifest, opts \\ []) do
-    Enum.concat([
-      reserved_run_name(manifest),
-      Enum.flat_map(manifest.tasks, &task_findings(manifest, &1)),
-      serial_fanout(manifest),
-      write_collisions(manifest),
-      if(Keyword.get(opts, :allow_noncanonical_route, false),
-        do: [],
-        else:
-          noncanonical_routes(manifest, Keyword.get_lazy(opts, :registry, &ModelRegistry.load/0))
-      )
-    ])
+    with {:ok, collisions} <- write_collisions(manifest) do
+      {:ok,
+       Enum.concat([
+         reserved_run_name(manifest),
+         Enum.flat_map(manifest.tasks, &task_findings(manifest, &1)),
+         serial_fanout(manifest),
+         collisions,
+         if(Keyword.get(opts, :allow_noncanonical_route, false),
+           do: [],
+           else:
+             noncanonical_routes(
+               manifest,
+               Keyword.get_lazy(opts, :registry, &ModelRegistry.load/0)
+             )
+         )
+       ])}
+    end
   end
 
   # Manifest.load already rejects this run name; kept because lint_manifest checks it too.
@@ -74,25 +84,40 @@ defmodule Cornerman.Lint do
   # Relative expect_files resolve inside each task's own directory and cannot collide; only
   # a shared absolute path (after ~ expansion) is a real collision. Paths are reported in
   # first-listed order, as Ringer's insertion-ordered dict does.
-  defp write_collisions(%Manifest{worktrees: true}), do: []
+  defp write_collisions(%Manifest{worktrees: true}), do: {:ok, []}
 
   defp write_collisions(%Manifest{tasks: tasks}) do
-    listed =
-      for %Task{key: key, expect_files: files} <- tasks,
-          path <- files,
-          String.starts_with?(Py.expanduser(path), "/"),
-          do: {path, key}
+    with {:ok, listed} <- absolute_expect_files(tasks) do
+      {:ok,
+       listed
+       |> Enum.map(&elem(&1, 0))
+       |> Enum.uniq()
+       |> Enum.flat_map(fn path ->
+         keys = for {^path, key} <- listed, do: key
 
-    listed
-    |> Enum.map(&elem(&1, 0))
-    |> Enum.uniq()
-    |> Enum.flat_map(fn path ->
-      keys = for {^path, key} <- listed, do: key
+         if length(keys) >= 2,
+           do: ["manifest: write collision on #{path}: listed by #{Enum.join(keys, ", ")}."],
+           else: []
+       end)}
+    end
+  end
 
-      if length(keys) >= 2,
-        do: ["manifest: write collision on #{path}: listed by #{Enum.join(keys, ", ")}."],
-        else: []
+  # `{path, task key}` for each expect_file that is absolute once `~` is expanded, keyed by
+  # the path as written. Stops at the first `~user` that does not resolve, as Python raises.
+  defp absolute_expect_files(tasks) do
+    pairs = for %Task{key: key, expect_files: files} <- tasks, path <- files, do: {path, key}
+
+    Enum.reduce_while(pairs, {:ok, []}, fn {path, key}, {:ok, acc} ->
+      case Py.expanduser(path) do
+        {:ok, "/" <> _} -> {:cont, {:ok, [{path, key} | acc]}}
+        {:ok, _relative} -> {:cont, {:ok, acc}}
+        {:error, _} = error -> {:halt, error}
+      end
     end)
+    |> case do
+      {:ok, acc} -> {:ok, Enum.reverse(acc)}
+      error -> error
+    end
   end
 
   defp noncanonical_routes(%Manifest{tasks: tasks}, %ModelRegistry{} = registry) do
