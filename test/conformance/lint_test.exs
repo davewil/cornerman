@@ -15,6 +15,20 @@ defmodule Cornerman.Conformance.LintTest do
 
   @divergences Conformance.divergences()
 
+  # The oracle's own output depends on its Python: argparse reworded its errors between 3.12
+  # and 3.13. Parity is only meaningful against the version .tool-versions pins.
+  test "the oracle runs on the pinned Python version" do
+    [_, pinned] =
+      File.read!(Path.join(Conformance.root(), ".tool-versions"))
+      |> then(&Regex.run(~r/^python\s+(\S+)$/m, &1))
+
+    python = System.get_env("CORNERMAN_PYTHON") || System.find_executable("python3")
+    {version, 0} = System.cmd(python, ["-c", "import platform; print(platform.python_version())"])
+
+    assert String.trim(version) == pinned,
+           "the oracle must run on Python #{pinned} (from .tool-versions); #{python} is #{String.trim(version)}"
+  end
+
   test "the oracle runs in the sealed environment (guards against harness bugs)" do
     manifest = Path.join(Conformance.oracle_dir(), "templates/review-swarm/manifest.json")
     home = Conformance.sealed_home()
