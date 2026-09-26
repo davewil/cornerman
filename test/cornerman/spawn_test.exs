@@ -120,6 +120,21 @@ defmodule Cornerman.SpawnTest do
       assert_all_dead(pids, 3_000)
     end
 
+    # ENG-495: the exit event used to go out as soon as SIGTERM was sent, while a leader that
+    # ignores SIGTERM was still running, and the run then ended before erlexec had reaped
+    # the leader (erlexec logged "unknown msg: {:error, :eperm}").
+    test "the exit event waits for a leader that ignores SIGTERM to die", %{tmp_dir: dir} do
+      pidfile = Path.join(dir, "pids")
+      script = ~S(trap '' TERM; echo $$ >> "$1"; while :; do sleep 0.05; done)
+
+      {:ok, ref} =
+        Spawn.start(["sh", "-c", script, "sh", pidfile], timeout_ms: 200, kill_grace_ms: 1_000)
+
+      [leader] = wait_for_pids(pidfile, 1)
+      assert_receive {:cornerman_spawn, ^ref, {:exit, :timeout}}, 5_000
+      refute alive?(leader), "the exit event arrived while the leader was still running"
+    end
+
     test "stop/1 kills the worker and its children", %{tmp_dir: dir} do
       pidfile = Path.join(dir, "pids")
       script = ~S(echo $$ >> "$1"; sleep 300 & echo $! >> "$1"; wait)
