@@ -15,7 +15,7 @@ processes can coordinate through files, and OTP does that job natively (see the 
 
 ## Status
 
-Pre-phase-0. Nothing runs yet. The plan is in [`docs/plan.html`](docs/plan.html) (published at
+Phase 0 (OS process control) and phase 1a (`cornerman lint`, byte-identical to Ringer) have landed. The plan is in [`docs/plan.html`](docs/plan.html) (published at
 <https://claude.ai/artifact/D66CNivbe6tjyHiuCS7ii7>). The next step is the process-control spike:
 proving that a worker and its sub-workers can be killed as a group, that stdout streams, and that
 nothing outlives the VM.
@@ -32,6 +32,10 @@ Cornerman tracks upstream Ringer; it is not a fork of it.
   `registry/model-identity.toml`, docs) are used from the pin, not copied.
 - Intended differences from Ringer are recorded in [`DIVERGENCES.toml`](DIVERGENCES.toml), with a
   reason and a date. A difference that isn't in the ledger is drift.
+- A daily job (`.github/workflows/upstream-bump.yml`, logic in `scripts/upstream-bump.sh`) moves
+  the pin to upstream `main` and runs the suite. Green with no new upstream surface: it pushes the
+  bump. Otherwise it files or updates a Linear drift issue under ENG-473. Try it locally with
+  `TARGET_SHA=<upstream sha> DRY_RUN=1 scripts/upstream-bump.sh`.
 
 Clone with submodules:
 

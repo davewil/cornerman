@@ -1,0 +1,67 @@
+# Upstream bump job (ENG-475 phase 1b). Daily: move vendor/ringer-py to upstream main, run the
+# suite against the oracle at the new SHA, then either push the bump (green, no new surface)
+# or file/update a Linear drift issue under ENG-473 (scripts/upstream-bump.sh). Manual runs
+# can target a specific upstream SHA and/or dry-run (report only, no push, no issue).
+name: upstream-bump
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: "Upstream commit to test against (default: upstream main)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Report only: no commit, no push, no Linear issue"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: upstream-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-24.04
+    env:
+      MIX_ENV: test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          fetch-depth: 0
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          version-file: .tool-versions
+          version-type: strict
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .tool-versions
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            deps
+            _build
+          key: mix-${{ runner.os }}-${{ hashFiles('.tool-versions', 'mix.lock') }}
+      - run: mix deps.get
+      - run: mix compile --warnings-as-errors
+      - name: Bump, or report drift
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          REPORT: upstream-drift.md
+        run: |
+          git config user.name "cornerman-bump[bot]"
+          git config user.email "cornerman-bump@users.noreply.github.com"
+          before=$(git rev-parse HEAD)
+          scripts/upstream-bump.sh
+          if [ "$(git rev-parse HEAD)" != "$before" ] && [ "$DRY_RUN" != "1" ]; then
+            git push origin HEAD:main
+          fi
+          if [ -f "$REPORT" ]; then cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"; fi
