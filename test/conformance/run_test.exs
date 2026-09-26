@@ -844,6 +844,40 @@ defmodule Cornerman.Conformance.RunTest do
     )
   end
 
+  test "run/late-output-after-five-seconds" do
+    # Ringer's worker is done when it has exited AND its stdout has closed (asyncio's
+    # proc.wait() waits for the pipes), all within timeout_s. A background child writing
+    # at 7 s is still read, and the check waits for it.
+    worker = "(sleep 7; echo late-output) &\necho early\nprintf 'ready\\n' > out.txt\n"
+
+    conforms!(
+      "run/late-output-after-five-seconds",
+      scenario(manifest: manifest([task("alpha")]), workers: %{"alpha" => worker})
+    )
+  end
+
+  test "run/background-child-outlives-timeout" do
+    # The worker exits at once but its child holds stdout past timeout_s: the attempt is a
+    # TIMEOUT and the whole group, child included, is killed.
+    worker = """
+    mkdir -p "$HOME/fixture/volatile"
+    sh -c 'echo $$ > "$HOME/fixture/volatile/child.pid"; exec sleep 30' &
+    printf 'ready\\n' > out.txt
+    """
+
+    conforms!(
+      "run/background-child-outlives-timeout",
+      scenario(
+        manifest: manifest([task("alpha", %{"timeout_s" => 2, "max_attempts" => 1})]),
+        workers: %{"alpha" => worker}
+      ),
+      fn impl, home ->
+        pid = File.read!(Path.join(home, "fixture/volatile/child.pid")) |> String.trim()
+        refute alive_after_grace?(pid), "#{impl}: the worker's child #{pid} outlived timeout_s"
+      end
+    )
+  end
+
   # --- argv ---------------------------------------------------------------------------------------------
 
   test "run/argv-missing-manifest" do
