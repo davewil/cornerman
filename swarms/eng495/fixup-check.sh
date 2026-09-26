@@ -37,21 +37,28 @@ report_failure() {
   exit 1
 }
 
-# The spawn suite five times: every run green and not one erlexec "unknown msg" line.
-for seed in 1 2 3 4 5; do
-  $MISE exec -- mix test test/cornerman/spawn_test.exs --seed "$seed" > "$LOG" 2>&1 \
-    || report_failure "spawn suite failed with seed $seed"
+
+# Ringer gives a check 60 seconds, so: the full suite once, then the spawn suite with two
+# more seeds. All three runs must be green with not one erlexec "unknown msg" line (before
+# the fix, every spawn-suite run logged one). The orchestrator runs the full suite twice
+# again at the landed SHA.
+noise() {
   if grep -q 'unknown msg' "$LOG"; then
-    echo "FAIL: erlexec still logs an unknown message (spawn suite, seed $seed):"
+    echo "FAIL: erlexec still logs an unknown message ($1):"
     grep -B2 -A2 'unknown msg' "$LOG" | head -20
     exit 1
   fi
-  echo "spawn suite seed $seed: $(grep -E '^Result:' "$LOG"), no erlexec noise"
-done
+}
 
-for run in 1 2; do
-  $MISE exec -- mix test > "$LOG" 2>&1 || report_failure "full suite failed on run $run of 2"
-  echo "mix test run $run of 2: $(grep -E '^Result:' "$LOG")"
+$MISE exec -- mix test > "$LOG" 2>&1 || report_failure "full suite failed"
+noise "full suite"
+echo "mix test: $(grep -E '^Result:' "$LOG"), no erlexec noise"
+
+for seed in 1 2; do
+  $MISE exec -- mix test test/cornerman/spawn_test.exs --seed "$seed" > "$LOG" 2>&1 \
+    || report_failure "spawn suite failed with seed $seed"
+  noise "spawn suite, seed $seed"
+  echo "spawn suite seed $seed: $(grep -E '^Result:' "$LOG"), no erlexec noise"
 done
 
 mkdir -p "$OUT"
@@ -59,4 +66,4 @@ git add -A -- lib
 git diff --cached HEAD > "$OUT/fixup.patch"
 [ -s "$OUT/fixup.patch" ] || fail "exported patch is empty"
 cp notes.md "$OUT/notes.md"
-echo "PASS: full suite (lint parity included) green twice and spawn suite green 5x with no erlexec noise; patch at $OUT/fixup.patch"
+echo "PASS: full suite green and spawn suite green with two more seeds, no erlexec noise; patch at $OUT/fixup.patch"
