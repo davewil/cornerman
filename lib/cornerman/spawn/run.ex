@@ -20,7 +20,7 @@ defmodule Cornerman.Spawn.Run do
     grace_ms = Keyword.get(opts, :kill_grace_ms, @default_grace_ms)
 
     case :exec.run(Enum.map(resolve(argv), &to_charlist/1), exec_options(opts, grace_ms)) do
-      {:ok, _lwp, os_pid} ->
+      {:ok, lwp, os_pid} ->
         Process.monitor(owner)
         schedule_timeout(Keyword.get(opts, :timeout_ms, :infinity))
 
@@ -29,6 +29,7 @@ defmodule Cornerman.Spawn.Run do
            ref: ref,
            owner: owner,
            notify?: true,
+           lwp: lwp,
            os_pid: os_pid,
            grace_ms: grace_ms,
            # nil while running; the reason to report once the kill has been requested
@@ -94,8 +95,9 @@ defmodule Cornerman.Spawn.Run do
 
   # erlexec's per-command process exits with the leader: :normal for status 0, otherwise
   # {:exit_status, raw} with the raw wait status. After we have started a kill, the kill
-  # reason is reported instead of the status.
-  def handle_info({:EXIT, _lwp, reason}, %{leader_exited?: false} = state)
+  # reason is reported instead of the status. Only that process counts: the ports behind our
+  # System.cmd("kill") calls are linked to us too, and their :normal exits are not the leader's.
+  def handle_info({:EXIT, lwp, reason}, %{lwp: lwp, leader_exited?: false} = state)
       when reason == :normal or (is_tuple(reason) and elem(reason, 0) == :exit_status) do
     notify(state, {:exit, state.ending || {:status, status(reason)}})
     finish(%{state | leader_exited?: true, notify?: false})
