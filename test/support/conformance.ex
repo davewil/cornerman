@@ -46,10 +46,20 @@ defmodule Cornerman.Conformance do
     out = Path.join(capture_dir, "#{impl}.stdout")
     err = Path.join(capture_dir, "#{impl}.stderr")
 
-    # stdout and stderr are compared separately, so they go to separate files.
+    # stdout and stderr are compared separately, so they go to separate files. The capture
+    # paths travel as arguments, not variables: workers inherit the environment.
     {_, status} =
-      System.cmd("sh", ["-c", ~S(exec "$0" "$@" >"$OUT" 2>"$ERR" </dev/null), exe | args],
-        env: [{"OUT", out}, {"ERR", err} | env],
+      System.cmd(
+        "sh",
+        [
+          "-c",
+          ~S(o=$1 e=$2; shift 2; exec "$@" >"$o" 2>"$e" </dev/null),
+          "sh",
+          out,
+          err,
+          exe | args
+        ],
+        env: env,
         cd: home
       )
 
@@ -131,6 +141,12 @@ defmodule Cornerman.Conformance do
       # Both implementations read the same registry file: the oracle reads it next to its
       # ringer.py, Cornerman from CORNERMAN_REGISTRY (default: the pinned copy).
       {"CORNERMAN_REGISTRY", Path.join(oracle_dir(), "registry/model-identity.toml")},
+      # This harness runs inside a BEAM, whose launcher exported these; a user's shell does
+      # not have them, and both implementations' workers would inherit them.
+      {"BINDIR", nil},
+      {"ROOTDIR", nil},
+      {"EMU", nil},
+      {"PROGNAME", nil},
       # Unset anything from the caller that either implementation would read.
       {"RINGER_CONFIG", nil},
       {"RINGER_IDENTITY", nil},

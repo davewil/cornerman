@@ -649,6 +649,201 @@ defmodule Cornerman.Conformance.RunTest do
     )
   end
 
+  # --- inputs the first fixtures did not cover (phase 2a probes and review) -------------
+
+  test "run/background-child-holds-stdout" do
+    worker = "(sleep 2; echo late-output) &\necho early\nprintf 'ready\\n' > out.txt\n"
+
+    conforms!(
+      "run/background-child-holds-stdout",
+      scenario(manifest: manifest([task("alpha")]), workers: %{"alpha" => worker})
+    )
+  end
+
+  test "run/unicode-key-with-space" do
+    conforms!(
+      "run/unicode-key-with-space",
+      scenario(manifest: manifest([task("tâche un")]), workers: %{"tâche un" => @writes_ready})
+    )
+  end
+
+  test "run/relative-workdir" do
+    m = manifest([task("alpha")], %{"workdir" => "work-rel"})
+
+    conforms!(
+      "run/relative-workdir",
+      scenario(
+        files: %{"sub/m.json" => JSON.encode!(m)},
+        workers: %{"alpha" => @writes_ready},
+        invocations: [["run", "--no-dashboard", "--identity", "c", "@HOME@/sub/m.json"]]
+      )
+    )
+  end
+
+  test "run/stale-active-runs-pruned" do
+    stale =
+      ~s({"old-dead": {"pid": 999999, "identity": "x", "run_name": "old", "workdir": "/w", "started_at": "s"}, "old-live": {"pid": 1, "identity": "y", "run_name": "live", "workdir": "/w", "started_at": "s"}, "junk": {"pid": "abc"}})
+
+    conforms!(
+      "run/stale-active-runs-pruned",
+      scenario(
+        manifest: manifest([task("alpha")]),
+        workers: %{"alpha" => @writes_ready},
+        files: %{".ringer/active-runs.json" => stale}
+      )
+    )
+  end
+
+  test "run/large-worker-output" do
+    worker =
+      "i=0; while [ $i -lt 30000 ]; do echo \"line $i padding padding padding padding padding\"; i=$((i+1)); done\necho 'tokens used: 77'\nprintf 'ready\\n' > out.txt\n"
+
+    conforms!(
+      "run/large-worker-output",
+      scenario(manifest: manifest([task("alpha")]), workers: %{"alpha" => worker})
+    )
+  end
+
+  test "run/tilde-and-same-basename-deliverables" do
+    worker =
+      "mkdir -p a b \"$HOME/exp\"; echo A > a/out.txt; echo B > b/out.txt; echo T > \"$HOME/exp/t.md\"\n"
+
+    conforms!(
+      "run/tilde-and-same-basename-deliverables",
+      scenario(
+        manifest:
+          manifest([
+            task("alpha", %{
+              "expect_files" => ["a/out.txt", "b/out.txt", "~/exp/t.md"],
+              "check" => "test -s a/out.txt || { echo no; exit 1; }"
+            })
+          ]),
+        workers: %{"alpha" => worker}
+      )
+    )
+  end
+
+  test "run/artifacts-disabled-in-config" do
+    config =
+      "[artifact]\nenabled = false\n\n[engines.fake]\nbin = \"@HOME@/fixture/fake-worker.sh\"\nargs_template = [\"{taskdir}\", \"{spec}\"]\nsandbox_args = []\nfull_access_args = []\n"
+
+    conforms!(
+      "run/artifacts-disabled-in-config",
+      scenario(
+        manifest: manifest([task("alpha")]),
+        workers: %{"alpha" => @writes_ready},
+        config: config
+      )
+    )
+  end
+
+  test "run/quoting-in-spec-and-engine-args" do
+    config =
+      "[engines.fake]\nbin = \"@HOME@/fixture/fake-worker.sh\"\nargs_template = [\"{taskdir}\", \"{spec}\", \"{engine_args}\"]\nsandbox_args = []\nfull_access_args = []\n"
+
+    spec =
+      "It's a \"test\" with $HOME, `ls`, a tab\there and a newline\nthen more text so the spec is long enough to avoid the lint finding."
+
+    conforms!(
+      "run/quoting-in-spec-and-engine-args",
+      scenario(
+        manifest:
+          manifest([
+            task("alpha", %{
+              "spec" => spec,
+              "engine_args" => ["--x={taskdir}", "two words", ""],
+              "max_attempts" => 2
+            })
+          ]),
+        workers: %{"alpha" => "printf '%s' \"$SPEC\" > spec.txt\nprintf 'bad\\n' > out.txt\n"},
+        config: config
+      )
+    )
+  end
+
+  test "run/worker-killed-by-signal" do
+    conforms!(
+      "run/worker-killed-by-signal",
+      scenario(
+        manifest: manifest([task("alpha", %{"max_attempts" => 1})]),
+        workers: %{"alpha" => "printf 'ready\\n' > out.txt\nkill -9 $$\n"}
+      )
+    )
+  end
+
+  test "run/check-killed-by-signal" do
+    conforms!(
+      "run/check-killed-by-signal",
+      scenario(
+        manifest:
+          manifest([
+            task("alpha", %{"max_attempts" => 1, "check" => "echo dying; kill -TERM $$"})
+          ]),
+        workers: %{"alpha" => @writes_ready}
+      )
+    )
+  end
+
+  test "run/worker-ignores-sigterm-on-timeout" do
+    conforms!(
+      "run/worker-ignores-sigterm-on-timeout",
+      scenario(
+        manifest: manifest([task("alpha", %{"timeout_s" => 1, "max_attempts" => 1})]),
+        workers: %{"alpha" => "trap '' TERM\necho stubborn\nsleep 30\n"}
+      )
+    )
+  end
+
+  test "run/many-tasks-few-slots" do
+    keys = for n <- 1..10, do: "t#{n}"
+
+    conforms!(
+      "run/many-tasks-few-slots",
+      scenario(
+        manifest: manifest(Enum.map(keys, &task/1), %{"max_parallel" => 4}),
+        workers: Map.new(keys, &{&1, "sleep 0.2\nprintf 'ready\\n' > out.txt\n"})
+      )
+    )
+  end
+
+  test "run/check-output-on-stderr" do
+    conforms!(
+      "run/check-output-on-stderr",
+      scenario(
+        manifest:
+          manifest([
+            task("alpha", %{"max_attempts" => 1, "check" => "echo 'to stderr' >&2; exit 4"})
+          ]),
+        workers: %{"alpha" => @writes_ready}
+      )
+    )
+  end
+
+  test "run/non-bmp-and-arabic-key" do
+    conforms!(
+      "run/non-bmp-and-arabic-key",
+      scenario(manifest: manifest([task("k٣-🥊")]), workers: %{"k٣-🥊" => @writes_ready})
+    )
+  end
+
+  test "run/worker-sees-no-launcher-variables" do
+    # The whole environment a worker sees, minus what the shell itself sets. The Erlang
+    # launcher exports BINDIR, ROOTDIR, EMU, PROGNAME; a worker must not inherit them.
+    worker = """
+    env | LC_ALL=C sort | grep -vE '^(_|SHLVL|PWD|OLDPWD|ATTEMPT|SPEC)=' > env-full.txt
+    printf 'ready\\n' > out.txt
+    """
+
+    conforms!(
+      "run/worker-sees-no-launcher-variables",
+      scenario(
+        manifest: manifest([task("alpha", %{"expect_files" => ["out.txt", "env-full.txt"]})]),
+        workers: %{"alpha" => worker},
+        env: [{"CAFE", "café ✓"}]
+      )
+    )
+  end
+
   # --- argv ---------------------------------------------------------------------------------------------
 
   test "run/argv-missing-manifest" do

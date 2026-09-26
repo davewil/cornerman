@@ -34,6 +34,13 @@ gitignored. The accepted patch lands as its own commit.
   into it.
 - **Checks run unsandboxed** with mise, and are authoritative. A worker's in-sandbox test run can
   differ (for example `ps` or signal restrictions); workers say so in `notes.md`.
+- **A check has 60 seconds, then Ringer kills it.** `CHECK_TIMEOUT_S = 60` is hard-coded in
+  `ringer.py`, and a timed-out check is a TIMEOUT verdict whose retry prompt says only "check timed
+  out". Clean deps plus the full suite twice does not fit: the phase 2a bakeoff lost every lane
+  that reached its check this way (2026-09-26). Split the gate: the manifest's check does what fits
+  (owned-path rules, format, an incremental compile, the target test file once) and exports the
+  patch; the orchestrator runs the heavy gate (clean deps, full suite twice, leak check) on the
+  lane's worktree afterwards. Failed lanes keep their worktrees, so the work survives either way.
 - **Keep check output short and failure-first.** Ringer's retry prompt includes only the first
   ~2000 characters of check output (`VerifyResult.raw_output_excerpt`), after a tail of the worker
   log. Stream-json engines fill that tail with JSON events. Send build output to a file and print
