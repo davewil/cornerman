@@ -168,16 +168,30 @@ defmodule Cornerman.SpawnTest do
         Path.wildcard(Path.join(Mix.Project.build_path(), "lib/*/ebin"))
         |> Enum.flat_map(&["-pa", &1])
 
+      # :exit_status and :stderr_to_stdout keep what the child VM printed, for the failure message.
       port =
-        Port.open({:spawn_executable, System.find_executable("elixir")},
+        Port.open({:spawn_executable, System.find_executable("elixir")}, [
+          :exit_status,
+          :stderr_to_stdout,
           args: pa_args ++ ["-e", code],
           cd: dir
-        )
+        ])
 
       beam_pid = wait_for_pids(beam_pidfile, 1, 60_000) |> hd()
       # Generous: the child VM starts cold, and under a loaded machine (a swarm running
       # this suite in parallel) its worker can take several seconds to write the file.
-      worker_pids = wait_for_pids(pidfile, 2, 30_000)
+      worker_pids =
+        eventually(30_000, fn ->
+          with {:ok, body} <- File.read(pidfile),
+               pids = String.split(body, ~r/\s+/, trim: true),
+               true <- length(pids) >= 2 do
+            {:ok, pids}
+          else
+            _ -> :retry
+          end
+        end) ||
+          flunk("the child VM never started its worker; its output was:\n" <> drain_port(port))
+
       assert Enum.all?(worker_pids, &alive?/1)
 
       {_, 0} = System.cmd("kill", ["-9", beam_pid])
@@ -188,6 +202,15 @@ defmodule Cornerman.SpawnTest do
   end
 
   # --- helpers -------------------------------------------------------------
+
+  defp drain_port(port, acc \\ "") do
+    receive do
+      {^port, {:data, data}} -> drain_port(port, acc <> data)
+      {^port, {:exit_status, status}} -> drain_port(port, acc <> "\n[exit status #{status}]")
+    after
+      500 -> acc
+    end
+  end
 
   defp collect_output(ref, timeout, acc \\ "") do
     receive do
