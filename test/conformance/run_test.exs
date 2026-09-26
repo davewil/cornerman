@@ -878,6 +878,18 @@ defmodule Cornerman.Conformance.RunTest do
     )
   end
 
+  test "run/task-crash" do
+    # The worker swaps its own worker.log for a directory, so Ringer's next append to the
+    # log raises inside the task. RingerRunner.run's finally still prints the summary and
+    # closing lines; main then prints the error and exits 2. Nothing else on stderr.
+    worker = "rm -f worker.log && mkdir worker.log\nprintf 'ready\\n' > out.txt\n"
+
+    conforms!(
+      "run/task-crash",
+      scenario(manifest: manifest([task("alpha")]), workers: %{"alpha" => worker})
+    )
+  end
+
   # --- argv ---------------------------------------------------------------------------------------------
 
   test "run/argv-missing-manifest" do

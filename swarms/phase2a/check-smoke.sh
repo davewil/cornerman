@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Phase 2a fix-up check. Ringer kills a check after 60 s, so this is a smoke subset: the
-# owned-path rules, format, an incremental compile, the case that must turn green, and a
+# owned-path rules, format, an incremental compile, the cases that must turn green, and a
 # spread of run and lint cases. The orchestrator runs the full gate (swarms/phase2a/check.sh:
 # clean deps, the whole suite twice, the leak check) on a passing lane afterwards.
 # Usage: check-smoke.sh <out-dir outside the worktree>
@@ -29,7 +29,8 @@ MIX_ENV=test $MISE exec -- mix compile --warnings-as-errors > "$LOG" 2>&1 || {
 
 only=()
 for t in \
-  "run/background-child-holds-stdout" "run/pass-first-try" "run/retry-then-pass" \
+  "run/late-output-after-five-seconds" "run/background-child-outlives-timeout" "run/task-crash" \
+  "run/worker-killed-by-signal" "run/background-child-holds-stdout" "run/pass-first-try" "run/retry-then-pass" \
   "run/timeout-kills-the-process-group" "run/live-state" "run/worker-sees-no-launcher-variables" \
   "run/unicode-key-with-space" "run/dry-run" "run/lint-error-aborts" "run/parallel" \
   "run/stale-active-runs-pruned" "run/fallback-harvest" \
