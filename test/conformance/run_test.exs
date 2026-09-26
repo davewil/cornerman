@@ -890,6 +890,82 @@ defmodule Cornerman.Conformance.RunTest do
     )
   end
 
+  test "run/worker-environment-perl-vars" do
+    # Whatever runs the worker must not be steered by perl or locale settings in the
+    # caller's environment, and the worker still sees them unchanged.
+    worker = """
+    { echo "PERL_UNICODE=$PERL_UNICODE"; echo "PERL5OPT=$PERL5OPT"; echo "PERL5LIB=$PERL5LIB"; } > perl-env.txt
+    echo "worker output survives"
+    printf 'ready\\n' > out.txt
+    """
+
+    conforms!(
+      "run/worker-environment-perl-vars",
+      scenario(
+        manifest: manifest([task("alpha", %{"expect_files" => ["out.txt", "perl-env.txt"]})]),
+        workers: %{"alpha" => worker},
+        env: [
+          {"PERL_UNICODE", "SDA"},
+          {"PERL5OPT", "-Mwarnings=FATAL,all"},
+          {"PERL5LIB", "/nonexistent/perl5lib"}
+        ]
+      )
+    )
+  end
+
+  test "run/worker-exec-fails" do
+    # The engine binary exists and is executable, but exec fails (its interpreter is
+    # missing): Ringer records one ERROR attempt, "worker spawn failed: ...", no retry.
+    config = """
+    [engines.fake]
+    bin = "@HOME@/fixture/bad-interpreter.sh"
+    args_template = ["{taskdir}", "{spec}"]
+    sandbox_args = []
+    full_access_args = []
+    """
+
+    conforms!(
+      "run/worker-exec-fails",
+      scenario(
+        manifest: manifest([task("alpha")]),
+        config: config,
+        files: %{"fixture/bad-interpreter.sh" => "#!/nonexistent/interpreter\necho never\n"},
+        executables: ["fixture/bad-interpreter.sh"]
+      )
+    )
+  end
+
+  test "run/timeout-reports-the-exited-workers-status" do
+    # The worker exits 0 at once; its child holds stdout and ignores SIGTERM, so the
+    # attempt times out. Ringer reports the worker's own status (rc=0), not the kill.
+    # Ringer never sends the SIGKILL here (its second proc.wait() returns at once because
+    # the exit status is already known), so the child outlives it; Cornerman kills the
+    # group, which DIVERGENCES.toml records. Only Cornerman's side is held to that.
+    worker = """
+    mkdir -p "$HOME/fixture/volatile"
+    sh -c 'echo $$ > "$HOME/fixture/volatile/child.pid"; trap "" TERM; sleep 30' &
+    echo started
+    """
+
+    conforms!(
+      "run/timeout-reports-the-exited-workers-status",
+      scenario(
+        manifest: manifest([task("alpha", %{"timeout_s" => 1, "max_attempts" => 1})]),
+        workers: %{"alpha" => worker}
+      ),
+      fn impl, home ->
+        pid = File.read!(Path.join(home, "fixture/volatile/child.pid")) |> String.trim()
+
+        if impl == :cornerman do
+          refute alive_after_grace?(pid),
+                 "cornerman: the worker's child #{pid} outlived the timeout"
+        else
+          System.cmd("kill", ["-9", pid], stderr_to_stdout: true)
+        end
+      end
+    )
+  end
+
   # --- argv ---------------------------------------------------------------------------------------------
 
   test "run/argv-missing-manifest" do

@@ -24,7 +24,7 @@ defmodule Cornerman.Conformance.Scenario do
   ## Fixture conventions
 
   Strings in the manifest, config, extra files and argv may contain `@HOME@`, replaced by
-  the sealed home. The default config defines one engine, `fake`, whose binary is
+  the sealed home. `executables` lists files (relative to the home) made executable. The default config defines one engine, `fake`, whose binary is
   `@HOME@/fixture/fake-worker.sh` (`test/conformance/fixtures/run/fake-worker.sh`). It
   runs `@HOME@/fixture/workers/<task key>.sh` with `ATTEMPT` (1, 2, …) and `SPEC` in its
   environment and the task directory as its working directory. Worker scripts are shell,
@@ -50,7 +50,8 @@ defmodule Cornerman.Conformance.Scenario do
             invocations: [],
             env: [],
             fake_bins: ["codex"],
-            live: nil
+            live: nil,
+            executables: []
 
   @type t :: %__MODULE__{}
 
@@ -159,6 +160,8 @@ defmodule Cornerman.Conformance.Scenario do
       File.mkdir_p!(Path.dirname(path))
       File.write!(path, subst(content, home))
     end
+
+    for rel <- scenario.executables, do: File.chmod!(Path.join(home, rel), 0o755)
   end
 
   defp subst(value, home) when is_binary(value), do: String.replace(value, "@HOME@", home)

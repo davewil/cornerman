@@ -29,6 +29,7 @@ MIX_ENV=test $MISE exec -- mix compile --warnings-as-errors > "$LOG" 2>&1 || {
 
 only=()
 for t in \
+  "run/worker-environment-perl-vars" "run/worker-exec-fails" "run/timeout-reports-the-exited-workers-status" \
   "run/late-output-after-five-seconds" "run/background-child-outlives-timeout" "run/task-crash" \
   "run/worker-killed-by-signal" "run/background-child-holds-stdout" "run/pass-first-try" "run/retry-then-pass" \
   "run/timeout-kills-the-process-group" "run/live-state" "run/worker-sees-no-launcher-variables" \
@@ -38,7 +39,8 @@ for t in \
   "lint/diagnostic-path-tools-first" "lint/template/review-swarm/manifest"; do
   only+=(--only "test:test $t")
 done
-if ! $MISE exec -- mix test test/conformance "${only[@]}" --max-cases 24 > "$LOG" 2>&1; then
+only+=(--only "test:test the caller gets an exit and the group dies when :exec dies")
+if ! $MISE exec -- mix test test/conformance test/cornerman/spawn_exec_crash_test.exs "${only[@]}" --max-cases 24 > "$LOG" 2>&1; then
   echo "FAIL: smoke cases. $(grep -E '^Result:' "$LOG" || echo 'No test result: the suite did not start.')"
   grep -qE '^Result:' "$LOG" || tail -15 "$LOG"
   grep -E '^ +[0-9]+\) test ' "$LOG" | sed -E 's/^ +[0-9]+\) test //' | head -20

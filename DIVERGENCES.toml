@@ -37,3 +37,10 @@ fields = ["stderr"]
 since = "2026-09-26"
 upstream_sha = "0be58d3"
 reason = "The message after 'cornerman: error: ' comes from Elixir's TOML parser, not Python's tomllib ('Invalid value (at line 1, column 14)'). Exit status (2), empty stdout, the prefix and a single line must still match."
+
+[[divergence]]
+case = "run/timeout-reports-the-exited-workers-status"
+fields = ["stderr"]
+since = "2026-09-26"
+upstream_sha = "0be58d3"
+reason = "When a worker has exited but a background child holding its stdout ignores SIGTERM, Ringer's timeout path never sends SIGKILL (its second proc.wait() returns at once because the exit status is already known), so the child outlives the run and Python prints an 'Exception ignored in BaseSubprocessTransport.__del__' traceback on stderr at exit. Cornerman kills the whole group, a phase 0 guarantee, and prints nothing there. Exit status, stdout, the reported worker status (rc=0), the verdict and every file still match Ringer."
