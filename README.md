@@ -15,10 +15,10 @@ processes can coordinate through files, and OTP does that job natively (see the 
 
 ## Status
 
-Phase 0 (OS process control) and phase 1a (`cornerman lint`, byte-identical to Ringer) have landed. The plan is in [`docs/plan.html`](docs/plan.html) (published at
-<https://claude.ai/artifact/D66CNivbe6tjyHiuCS7ii7>). The next step is the process-control spike:
-proving that a worker and its sub-workers can be killed as a group, that stdout streams, and that
-nothing outlives the VM.
+Phase 0 (OS process control on erlexec) and phase 1 (`cornerman lint`, byte-identical to Ringer,
+plus the upstream bump job) have landed. Next is phase 2: `cornerman run` in a standalone VM. The
+plan is in [`docs/plan.html`](docs/plan.html) (published at
+<https://claude.ai/artifact/D66CNivbe6tjyHiuCS7ii7>); work is tracked in Linear (ENG-473).
 
 ## Relationship to Ringer
 
