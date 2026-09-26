@@ -175,7 +175,9 @@ defmodule Cornerman.SpawnTest do
         )
 
       beam_pid = wait_for_pids(beam_pidfile, 1, 60_000) |> hd()
-      worker_pids = wait_for_pids(pidfile, 2)
+      # Generous: the child VM starts cold, and under a loaded machine (a swarm running
+      # this suite in parallel) its worker can take several seconds to write the file.
+      worker_pids = wait_for_pids(pidfile, 2, 30_000)
       assert Enum.all?(worker_pids, &alive?/1)
 
       {_, 0} = System.cmd("kill", ["-9", beam_pid])
