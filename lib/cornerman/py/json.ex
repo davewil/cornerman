@@ -181,8 +181,9 @@ defmodule Cornerman.Py.Json do
   defp skip_digits(bytes), do: bytes
 
   # Python's float() rounds correctly and saturates: an overflowing literal is inf and an
-  # underflowing one is 0.0, each with its sign. Erlang rejects the overflow, so that case is
-  # decided from the literal itself.
+  # underflowing one is 0.0, each with its sign. Erlang already returns 0.0 (or -0.0) for
+  # underflow and for an all-zero mantissa, and raises only on overflow, so a failure here
+  # means the literal is too large whatever the sign of its exponent.
   defp float(sign, int, frac, exp) do
     frac_digits = if frac == "", do: "0", else: frac
     exp_text = if exp == "", do: "", else: "e" <> exp
@@ -191,18 +192,7 @@ defmodule Cornerman.Py.Json do
     try do
       :erlang.binary_to_float(text)
     rescue
-      ArgumentError -> saturate(sign, int <> frac_digits, exp)
-    end
-  end
-
-  defp saturate(sign, mantissa, exp) do
-    zero? = String.match?(mantissa, ~r/\A0*\z/) or String.starts_with?(exp, "-")
-
-    cond do
-      zero? and sign == "-" -> -0.0
-      zero? -> 0.0
-      sign == "-" -> :neg_infinity
-      true -> :infinity
+      ArgumentError -> if sign == "-", do: :neg_infinity, else: :infinity
     end
   end
 
