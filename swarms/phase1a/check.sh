@@ -26,6 +26,10 @@ bad=$(git status --porcelain --untracked-files=all | awk '{print $NF}' \
 # Ringer injects only the first ~2000 chars of this output into a retry prompt, so print
 # the failure first and keep build noise out of the way.
 LOG="$(mktemp)"
+# Gate against clean dependencies, never the worker's copy: a rebuild inside a sandbox can
+# leave a second exec-port arch dir, and erlexec then refuses to start (seen on Terra).
+rm -rf deps _build
+cp -R /Volumes/Personal/Users/davidwilliams/dev/elixir/cornerman/deps ./deps || fail "copying clean deps failed"
 $MISE exec -- mix deps.get > "$LOG" 2>&1 || { tail -20 "$LOG"; fail "mix deps.get failed"; }
 $MISE exec -- mix format --check-formatted > "$LOG" 2>&1 || { echo "FAIL: mix format --check-formatted:"; tail -20 "$LOG"; exit 1; }
 $MISE exec -- mix compile --force --warnings-as-errors > "$LOG" 2>&1 || {
@@ -33,7 +37,8 @@ $MISE exec -- mix compile --force --warnings-as-errors > "$LOG" 2>&1 || {
 
 for run in 1 2; do
   if ! $MISE exec -- mix test > "$LOG" 2>&1; then
-    echo "FAIL: mix test failed on run $run of 2. $(grep -E '^Result:' "$LOG")"
+    echo "FAIL: mix test failed on run $run of 2. $(grep -E '^Result:' "$LOG" || echo 'No test result: the suite did not start.')"
+    grep -qE '^Result:' "$LOG" || tail -15 "$LOG"
     echo "Failing tests:"
     grep -E '^ +[0-9]+\) test ' "$LOG" | sed -E 's/^ +[0-9]+\) test //' | head -30
     echo "First failures in detail:"
