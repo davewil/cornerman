@@ -4,8 +4,8 @@ defmodule Cornerman.Conformance do
   (`vendor/ringer-py`) and through Cornerman (`bin/cornerman`) in one sealed environment,
   and returns what each printed and how it exited.
 
-  Every case gets a fresh temp HOME with `XDG_CONFIG_HOME`, `RINGER_HOME` and (optionally)
-  `RINGER_CONFIG` inside it, self-update disabled, no Python bytecode written into the
+  Every case gets a fresh temp HOME with `XDG_CONFIG_HOME`, `RINGER_HOME`, `TMPDIR` and
+  (optionally) `RINGER_CONFIG` inside it, self-update and the catalog refresh disabled, no Python bytecode written into the
   vendored tree, and a pinned `PATH`: a per-case fake-bin dir (engine binaries that "exist"),
   then the Erlang and Elixir bin dirs Cornerman needs, then `/usr/bin:/bin`. Both
   implementations see the identical environment, so engine-binary diagnostics, which print
@@ -41,8 +41,10 @@ defmodule Cornerman.Conformance do
     env = sealed_env(home, opts)
     {exe, args} = command(impl, argv)
 
-    out = Path.join(home, "#{impl}.stdout")
-    err = Path.join(home, "#{impl}.stderr")
+    # Run cases snapshot every file under the home, so their captures go elsewhere.
+    capture_dir = Keyword.get(opts, :capture_dir, home)
+    out = Path.join(capture_dir, "#{impl}.stdout")
+    err = Path.join(capture_dir, "#{impl}.stderr")
 
     # stdout and stderr are compared separately, so they go to separate files.
     {_, status} =
@@ -74,16 +76,23 @@ defmodule Cornerman.Conformance do
     String.trim(real)
   end
 
-  defp command(:oracle, argv) do
+  @doc "The executable and arguments that run `argv` through `impl`."
+  def command(:oracle, argv) do
     python = System.get_env("CORNERMAN_PYTHON") || System.find_executable("python3")
     {python, [Path.join(oracle_dir(), "ringer.py") | argv]}
   end
 
-  defp command(:cornerman, argv), do: {Path.join(@root, "bin/cornerman"), argv}
+  def command(:cornerman, argv), do: {Path.join(@root, "bin/cornerman"), argv}
 
-  defp sealed_env(home, opts) do
+  @doc """
+  The environment both implementations run in (see the moduledoc). Extra `:env` pairs from
+  `opts` are applied last.
+  """
+  def sealed_env(home, opts) do
     fake_bin = Path.join(home, "fake-bin")
     File.mkdir_p!(fake_bin)
+    tmp = Path.join(home, "tmp")
+    File.mkdir_p!(tmp)
 
     for name <- Keyword.get(opts, :fake_bins, ["codex"]) do
       path = Path.join(fake_bin, name)
@@ -111,6 +120,10 @@ defmodule Cornerman.Conformance do
       {"XDG_CONFIG_HOME", Path.join(home, ".config")},
       {"RINGER_HOME", Path.join(home, ".ringer")},
       {"RINGER_NO_SELF_UPDATE", "1"},
+      # `run` starts a background OpenRouter catalog refresh unless told not to.
+      {"RINGER_NO_CATALOG_REFRESH", "1"},
+      # mkdtemp roots (baseline, demo) land inside the sealed home.
+      {"TMPDIR", tmp},
       {"PYTHONDONTWRITEBYTECODE", "1"},
       {"PATH", path},
       {"MIX_ENV", "test"},
@@ -124,44 +137,69 @@ defmodule Cornerman.Conformance do
       {"FLEET_IDENTITY", nil}
     ]
 
-    case Keyword.get(opts, :config) do
-      nil -> base
-      config -> List.keystore(base, "RINGER_CONFIG", 0, {"RINGER_CONFIG", config})
-    end
+    base =
+      case Keyword.get(opts, :config) do
+        nil -> base
+        config -> List.keystore(base, "RINGER_CONFIG", 0, {"RINGER_CONFIG", config})
+      end
+
+    Enum.reduce(Keyword.get(opts, :env, []), base, fn {k, v}, acc ->
+      List.keystore(acc, k, 0, {k, v})
+    end)
   end
 
-  # The one intended textual difference everywhere: the program's own name. Only a
-  # line-leading "ringer.py" (as in "ringer.py: error:" or argparse's "ringer.py lint:")
-  # and argparse's "usage: ringer.py" are rewritten.
+  # The one intended textual difference everywhere: the program's own name, where the CLI
+  # tells a human what to type or who is speaking. Rewritten: a line-leading "ringer.py"
+  # (as in "ringer.py: error:" or argparse's "ringer.py lint:"), argparse's
+  # "usage: ringer.py", and a quoted command such as "run './ringer.py models'", which
+  # becomes "run 'cornerman models'".
+  #
+  # Data-plane strings are NOT renamed and must match byte for byte: the "[ringer.py]"
+  # markers in worker logs and check output, eval-row values such as
+  # shepherd_model "none (ringer.py)" and pattern "ringer-py", and steering observations'
+  # source "ringer.py". Ringside, the models scoreboard and the backfill scripts read them.
   defp normalize(result, :cornerman), do: result
 
   defp normalize(result, :oracle) do
     %{result | stdout: rename(result.stdout), stderr: rename(result.stderr)}
   end
 
-  defp rename(text) do
+  @doc false
+  def rename(text) do
     text
     |> String.replace(~r/^ringer\.py(?=[ :])/m, "cornerman")
     |> String.replace(~r/^usage: ringer\.py/m, "usage: cornerman")
+    |> String.replace("'./ringer.py ", "'cornerman ")
   end
 
   @doc """
   Loads `DIVERGENCES.toml` as `%{case_id => [field]}`: the result fields (`"status"`,
-  `"stdout"`, `"stderr"`) allowed to differ for that case.
+  `"stdout"`, `"stderr"`) allowed to differ for that case. Entries with `paths` are file
+  divergences (see `path_divergences/0`) and are left out.
   """
   def divergences do
+    ledger_entries()
+    |> Enum.reject(&Map.has_key?(&1, "paths"))
+    |> Map.new(fn entry ->
+      {entry["case"], entry["fields"] || ["status", "stdout", "stderr"]}
+    end)
+  end
+
+  @doc """
+  File divergences: `[{case_pattern, [path_glob]}]`. For a matching case, a file under the
+  sealed home whose path matches one of the globs must exist in both implementations, but
+  its contents may differ. `case_pattern` is a case id, or a prefix ending in `/*`.
+  """
+  def path_divergences do
+    for %{"paths" => globs} = entry <- ledger_entries(), do: {entry["case"], globs}
+  end
+
+  defp ledger_entries do
     path = Path.join(@root, "DIVERGENCES.toml")
 
     case TomlElixir.decode(File.read!(path)) do
-      {:ok, doc} ->
-        doc
-        |> Map.get("divergence", [])
-        |> Map.new(fn entry ->
-          {entry["case"], entry["fields"] || ["status", "stdout", "stderr"]}
-        end)
-
-      {:error, reason} ->
-        raise "DIVERGENCES.toml does not parse: #{inspect(reason)}"
+      {:ok, doc} -> Map.get(doc, "divergence", [])
+      {:error, reason} -> raise "DIVERGENCES.toml does not parse: #{inspect(reason)}"
     end
   end
 end

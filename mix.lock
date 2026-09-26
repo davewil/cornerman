@@ -1,4 +1,5 @@
 %{
   "erlexec": {:hex, :erlexec, "2.5.0", "a0c603f3903421db16d6a4f49862f4cb7431d1aa17b4b3d7f3f5e2fe20905121", [:rebar3], [], "hexpm", "b24ff24c5fc084248f3498ca96f739daf820f3db02d9ba1006ab127de14b7215"},
+  "phoenix_pubsub": {:hex, :phoenix_pubsub, "2.3.0", "03916bfbc31a5121945b3cfffe5aec647a5c97fe1dc172a319b94428562359c9", [:mix], [], "hexpm", "eec7be6e9cf02e2551d389b558402d6c637cd3973796326e7ba4bb03c6b2e91d"},
   "toml_elixir": {:hex, :toml_elixir, "3.1.0", "7e3d8803f1e27e0585b13f57e68a37f4b7437c0cf8ad868abd56f10def144dc1", [:mix], [], "hexpm", "95e676725c6d411dd079bb34e2167b505600930280d6c7a51f6000ea669c2f69"},
 }

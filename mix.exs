@@ -31,7 +31,11 @@ defmodule Cornerman.MixProject do
       # config.toml, the model-identity registry, DIVERGENCES.toml. Chosen over `toml` 0.7
       # (2022), whose decoder trips Elixir 1.20's type checker; both parsed the real files
       # identically (2026-09-26).
-      {:toml_elixir, "~> 3.1"}
+      {:toml_elixir, "~> 3.1"},
+      # Run events (ENG-479): each task transition is published once and the state mirror,
+      # the eval log and, from phase 3, LiveView subscribe. Phoenix.PubSub rather than a
+      # hand-rolled Registry dispatch because phase 3 needs exactly this dependency.
+      {:phoenix_pubsub, "~> 2.3"}
     ]
   end
 end

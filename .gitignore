@@ -25,3 +25,6 @@ cornerman-*.tar
 
 # Ringer swarm exports (patches, notes); the accepted patch lands as its own commit.
 /swarms/*/out/
+
+# Claude Code agent worktrees (auxiliary; never committed).
+/.claude/worktrees/
