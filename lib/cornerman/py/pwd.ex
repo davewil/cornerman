@@ -1,7 +1,8 @@
 defmodule Cornerman.Py.Pwd do
   @moduledoc """
   `pwd.getpwnam(name).pw_dir` and `pwd.getpwuid(os.getuid()).pw_dir`: a user's real home
-  directory from the system user database, for `~user` expansion.
+  directory from the system user database, for `~user` expansion and for `~` when `$HOME` is
+  unset.
 
   Erlang has no binding for `getpwnam`, and reading `/etc/passwd` is wrong on macOS, where
   local users live in Directory Services, and on hosts that use NSS (LDAP, SSSD). So the
@@ -10,6 +11,9 @@ defmodule Cornerman.Py.Pwd do
     * macOS: `/usr/bin/dscacheutil -q user -a name NAME`
     * elsewhere: `getent passwd NAME` (glibc NSS: files, SSSD, LDAP, ...), falling back to
       `/etc/passwd` only when `getent` is not installed
+
+  `current_home/0` (`getpwuid(os.getuid())`, used when `$HOME` is unset) asks the same tools
+  by uid instead of name, taking the uid from `/usr/bin/id -ru`.
 
   The user-supplied name only ever travels as one argv element to `System.cmd/3`, which
   executes the binary directly: there is no shell, so no quoting to get wrong. A name that
@@ -32,13 +36,60 @@ defmodule Cornerman.Py.Pwd do
     end
   end
 
-  @doc "The home directory of the user running this VM, when `$HOME` is not set."
+  @doc """
+  The home directory of the user running this VM, when `$HOME` is not set:
+  `pwd.getpwuid(os.getuid()).pw_dir`. The real uid comes from `/usr/bin/id -ru` (`id -u`
+  prints the effective one) and the record is looked up by that uid
+  (`dscacheutil -q user -a uid UID` on macOS, `getent passwd UID` or `/etc/passwd`
+  elsewhere), never by name: accounts can share a uid, and a name lookup may find a different
+  record.
+  """
   @spec current_home() :: result()
   def current_home do
-    case run("/usr/bin/id", ["-un"]) do
-      {:ok, output} -> output |> String.trim() |> home_of()
+    case run("/usr/bin/id", ["-ru"]) do
+      {:ok, output} -> output |> String.trim() |> home_of_uid(:os.type())
       :error -> :unknown
     end
+  end
+
+  defp home_of_uid(uid, {:unix, :darwin}) do
+    case run("/usr/bin/dscacheutil", ["-q", "user", "-a", "uid", uid]) do
+      {:ok, output} -> dscacheutil_home(output)
+      :error -> :unknown
+    end
+  end
+
+  defp home_of_uid(uid, _os) do
+    case getent() do
+      nil ->
+        passwd_file_home_of_uid(uid)
+
+      getent ->
+        case run(getent, ["passwd", uid]) do
+          {:ok, output} -> passwd_home_of_uid(output, uid)
+          :error -> :unknown
+        end
+    end
+  end
+
+  defp passwd_file_home_of_uid(uid) do
+    case File.read("/etc/passwd") do
+      {:ok, text} -> passwd_home_of_uid(text, uid)
+      {:error, _} -> :unknown
+    end
+  end
+
+  # The third field must equal the uid: the /etc/passwd fallback scans every record, and a
+  # getent that looked a numeric key up by name would answer with another user's record.
+  defp passwd_home_of_uid(text, uid) do
+    text
+    |> String.split("\n")
+    |> Enum.find_value(:unknown, fn line ->
+      case String.split(line, ":") do
+        [_name, _password, ^uid, _gid, _gecos, home, _shell] -> {:ok, home}
+        _ -> nil
+      end
+    end)
   end
 
   defp lookup({:unix, :darwin}, name) do

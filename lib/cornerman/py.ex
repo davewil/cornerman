@@ -387,14 +387,76 @@ defmodule Cornerman.Py do
 
   @doc """
   `Path(text).expanduser().resolve()`, lexically (symlinks are not followed). A path holding a
-  lone surrogate cannot be encoded for the filesystem: Python's `UnicodeEncodeError`, with the
-  position counted in the lexical path (Python counts in the symlink-resolved one).
+  lone surrogate cannot be encoded for the filesystem: Python's `UnicodeEncodeError`, raised by
+  the `lstat` in `os.path.realpath`, with the position counted in the path `realpath` has built
+  when it first meets the surrogate (a relative path stays relative there).
   """
   @spec resolve(String.t()) :: {:ok, String.t()} | {:error, String.t()}
   def resolve(text) do
-    with {:ok, path} <- expanduser(text) do
-      path = Path.expand(path)
-      if message = Text.encode_error(path), do: {:error, message}, else: {:ok, path}
+    with {:ok, path} <- expanduser(text),
+         :ok <- walk_realpath(path) do
+      {:ok, Path.expand(path)}
+    end
+  end
+
+  # posixpath._joinrealpath without the symlink handling: every component that is joined on is
+  # lstat-ed, and failing to encode it is what raises.
+  defp walk_realpath(path) do
+    {start, rest} =
+      case path do
+        "/" <> rest -> {"/", rest}
+        _ -> {"", path}
+      end
+
+    rest
+    |> String.split("/")
+    |> Enum.reduce_while(start, fn
+      name, built when name in ["", "."] ->
+        {:cont, built}
+
+      "..", built ->
+        {:cont, parent(built)}
+
+      name, built ->
+        joined = join_component(built, name)
+
+        case Text.encode_error(joined) do
+          nil -> {:cont, joined}
+          message -> {:halt, {:error, message}}
+        end
+    end)
+    |> case do
+      {:error, _} = error -> error
+      _built -> :ok
+    end
+  end
+
+  defp join_component("", name), do: name
+
+  defp join_component(built, name) do
+    if String.ends_with?(built, "/"), do: built <> name, else: built <> "/" <> name
+  end
+
+  # The ".." step: pop the last component; keep ".." when there is nothing to pop.
+  defp parent(""), do: ".."
+
+  defp parent(built) do
+    {head, last} = split_last(built)
+    if last == "..", do: join_component(join_component(head, ".."), ".."), else: head
+  end
+
+  # posixpath.split: the head loses its trailing slashes unless it is all slashes.
+  defp split_last(built) do
+    case :binary.matches(built, "/") do
+      [] ->
+        {"", built}
+
+      matches ->
+        {at, 1} = List.last(matches)
+        head = binary_part(built, 0, at + 1)
+        last = binary_part(built, at + 1, byte_size(built) - at - 1)
+        stripped = String.trim_trailing(head, "/")
+        {if(stripped == "", do: head, else: stripped), last}
     end
   end
 
