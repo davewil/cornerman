@@ -61,6 +61,58 @@ defmodule Cornerman.CLI.Args do
                                        deliberate bakeoff
                """
 
+  @run_usage """
+  usage: cornerman run [-h] [--max-parallel MAX_PARALLEL] [--identity IDENTITY]
+                       [--no-dashboard] [--browser] [--no-artifact] [--dry-run]
+                       [--baseline] [--allow-noncanonical-route]
+                       manifest
+  """
+
+  @run_help @run_usage <>
+              """
+
+              positional arguments:
+                manifest              path to ringer.json
+
+              options:
+                -h, --help            show this help message and exit
+                --max-parallel MAX_PARALLEL
+                                      override manifest max_parallel
+                --identity IDENTITY   orchestrator identity for HUD state and eval rows
+                --no-dashboard        disable live dashboard
+                --browser             open the dashboard in the browser instead of Ringside
+                --no-artifact         disable zero-LLM HTML status/report artifacts (see
+                                      [artifact] in config.toml)
+                --dry-run             print the plan without spawning codex
+                --baseline            execute every task's CHECK against the unmodified tree
+                                      and report, spawning no workers — assertions about
+                                      unchanged behavior that fail baseline are bugs in the
+                                      check, not work for a model
+                --allow-noncanonical-route
+                                      allow a registry-marked noncanonical model route for a
+                                      deliberate bakeoff
+
+              Set RINGER_NO_CATALOG_REFRESH=1 to skip the non-blocking OpenRouter catalog
+              auto-refresh.
+              """
+
+  # The run subparser also takes `--config`; it overrides the top-level one.
+  @run_parser %{
+    options: [
+      %{id: :help, strings: ["-h", "--help"], nargs: 0},
+      %{id: :config, strings: ["--config"], nargs: 1},
+      %{id: :max_parallel, strings: ["--max-parallel"], nargs: 1},
+      %{id: :identity, strings: ["--identity"], nargs: 1},
+      %{id: :no_dashboard, strings: ["--no-dashboard"], nargs: 0},
+      %{id: :browser, strings: ["--browser"], nargs: 0},
+      %{id: :no_artifact, strings: ["--no-artifact"], nargs: 0},
+      %{id: :dry_run, strings: ["--dry-run"], nargs: 0},
+      %{id: :baseline, strings: ["--baseline"], nargs: 0},
+      %{id: :allow_noncanonical_route, strings: ["--allow-noncanonical-route"], nargs: 0}
+    ],
+    positional: {:manifest, :one}
+  }
+
   @top_parser %{
     options: [
       %{id: :help, strings: ["-h", "--help"], nargs: 0},
@@ -104,6 +156,9 @@ defmodule Cornerman.CLI.Args do
       name == "lint" ->
         lint(rest, config, top.extras)
 
+      name == "run" ->
+        run(rest, config, top.extras)
+
       name in @commands and top.extras == [] ->
         {:ok, name, %{config: config, argv: rest}}
 
@@ -144,6 +199,54 @@ defmodule Cornerman.CLI.Args do
         end
     end
   end
+
+  defp run(argv, config, top_extras) do
+    case Argparse.parse(@run_parser, argv) do
+      :help ->
+        {:exit, 0, @run_help, ""}
+
+      {:error, message} ->
+        run_error(message)
+
+      {:ok, %{positional: nil}} ->
+        run_error("the following arguments are required: manifest")
+
+      {:ok, %{positional: manifest, values: values, extras: extras}} ->
+        with {:ok, max_parallel} <- max_parallel(Map.get(values, :max_parallel)) do
+          case top_extras ++ extras do
+            [] ->
+              {:ok, "run",
+               %{
+                 manifest: manifest,
+                 config: Map.get(values, :config, config),
+                 max_parallel: max_parallel,
+                 identity: Map.get(values, :identity),
+                 no_dashboard: Map.get(values, :no_dashboard, false),
+                 browser: Map.get(values, :browser, false),
+                 no_artifact: Map.get(values, :no_artifact, false),
+                 dry_run: Map.get(values, :dry_run, false),
+                 baseline: Map.get(values, :baseline, false),
+                 allow_noncanonical_route: Map.get(values, :allow_noncanonical_route, false)
+               }}
+
+            extras ->
+              top_error("unrecognized arguments: #{Enum.join(extras, " ")}")
+          end
+        end
+    end
+  end
+
+  defp max_parallel(nil), do: {:ok, nil}
+
+  defp max_parallel(text) do
+    case Py.int(text) do
+      {:ok, n} -> {:ok, n}
+      {:error, _} -> run_error("argument --max-parallel: invalid int value: #{Py.repr(text)}")
+    end
+  end
+
+  defp run_error(message),
+    do: {:exit, 2, "", @run_usage <> "cornerman run: error: #{message}\n"}
 
   defp top_error(message), do: {:exit, 2, "", @top_usage <> "cornerman: error: #{message}\n"}
 

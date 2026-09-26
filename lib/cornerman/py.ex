@@ -67,6 +67,109 @@ defmodule Cornerman.Py do
   @spec len(String.t()) :: non_neg_integer()
   def len(text), do: text |> Text.codepoints() |> length()
 
+  @doc "Python's `text[:n]` (code points)."
+  @spec take(String.t(), non_neg_integer()) :: String.t()
+  def take(text, n) do
+    if byte_size(text) <= n,
+      do: text,
+      else: text |> String.to_charlist() |> Enum.take(n) |> List.to_string()
+  end
+
+  @doc "Python's `text[-n:]` (code points)."
+  @spec take_last(String.t(), non_neg_integer()) :: String.t()
+  def take_last(text, n) do
+    chars = String.to_charlist(text)
+    count = length(chars)
+    if count <= n, do: text, else: chars |> Enum.drop(count - n) |> List.to_string()
+  end
+
+  @doc "Python's `str.split()` with no arguments: runs of whitespace separate, ends trimmed."
+  @spec split(String.t()) :: [String.t()]
+  def split(text) do
+    text
+    |> String.to_charlist()
+    |> Enum.chunk_by(&(&1 in @whitespace))
+    |> Enum.reject(fn [c | _] -> c in @whitespace end)
+    |> Enum.map(&List.to_string/1)
+  end
+
+  @doc "Ringer's `shorten`: whitespace collapsed, then cut to `limit` code points with `...`."
+  @spec shorten(String.t(), non_neg_integer()) :: String.t()
+  def shorten(value, limit) do
+    clean = value |> split() |> Enum.join(" ")
+
+    if len(clean) <= limit,
+      do: clean,
+      else: take(clean, max(0, limit - 3)) <> "..."
+  end
+
+  # str.splitlines() boundaries.
+  @line_breaks [?\n, ?\r, 0x0B, 0x0C, 0x1C, 0x1D, 0x1E, 0x85, 0x2028, 0x2029]
+
+  @doc "Python's `str.splitlines()`: no trailing empty line, `\\r\\n` is one break."
+  @spec splitlines(String.t()) :: [String.t()]
+  def splitlines(text), do: splitlines(String.to_charlist(text), [], [])
+
+  defp splitlines([], [], acc), do: Enum.reverse(acc)
+  defp splitlines([], line, acc), do: Enum.reverse([line_string(line) | acc])
+
+  defp splitlines([?\r, ?\n | rest], line, acc),
+    do: splitlines(rest, [], [line_string(line) | acc])
+
+  defp splitlines([c | rest], line, acc) when c in @line_breaks,
+    do: splitlines(rest, [], [line_string(line) | acc])
+
+  defp splitlines([c | rest], line, acc), do: splitlines(rest, [c | line], acc)
+
+  defp line_string(line), do: line |> Enum.reverse() |> List.to_string()
+
+  @doc """
+  `shlex.quote`: the text as-is when it only holds ASCII word characters and `@%+=:,./-`,
+  otherwise single-quoted with embedded quotes spelled `'"'"'`.
+  """
+  @spec shlex_quote(String.t()) :: String.t()
+  def shlex_quote(""), do: "''"
+
+  def shlex_quote(text) do
+    if Regex.match?(~r/[^A-Za-z0-9_@%+=:,.\/-]/, text),
+      do: "'" <> String.replace(text, "'", "'\"'\"'") <> "'",
+      else: text
+  end
+
+  @doc """
+  `bytes.decode("utf-8", errors="replace")`: each maximal invalid subsequence becomes one
+  U+FFFD, as CPython's decoder does.
+  """
+  @spec decode_replace(binary()) :: String.t()
+  def decode_replace(bytes), do: decode_replace(bytes, [])
+
+  defp decode_replace(<<>>, acc), do: acc |> Enum.reverse() |> IO.iodata_to_binary()
+
+  defp decode_replace(<<c, rest::binary>>, acc) when c < 0x80,
+    do: decode_replace(rest, [c | acc])
+
+  defp decode_replace(<<lead, rest::binary>> = bytes, acc) do
+    case utf8_sequence(lead) do
+      nil ->
+        decode_replace(rest, ["�" | acc])
+
+      {need, lo, hi} ->
+        case check_continuation(rest, need, lo, hi, 0) do
+          :ok ->
+            decode_replace(
+              binary_part(bytes, need + 1, byte_size(bytes) - need - 1),
+              [binary_part(bytes, 0, need + 1) | acc]
+            )
+
+          {_, got} ->
+            decode_replace(
+              binary_part(bytes, got + 1, byte_size(bytes) - got - 1),
+              ["�" | acc]
+            )
+        end
+    end
+  end
+
   @doc "Python's `bool()` of a decoded value."
   @spec truthy?(term()) :: boolean()
   def truthy?(nil), do: false
@@ -385,6 +488,40 @@ defmodule Cornerman.Py do
   defp resolved_home("~" <> _), do: {:error, @no_home}
   defp resolved_home(home), do: {:ok, home}
 
+  @doc "pathlib's `Path(path).suffix`: `.txt`, or \"\" for `.hidden`, `name.` and `name`."
+  @spec suffix(String.t()) :: String.t()
+  def suffix(path) do
+    name = Path.basename(path)
+
+    case :binary.matches(name, ".") do
+      [] ->
+        ""
+
+      matches ->
+        {i, _} = List.last(matches)
+
+        if i > 0 and i < byte_size(name) - 1,
+          do: binary_part(name, i, byte_size(name) - i),
+          else: ""
+    end
+  end
+
+  @doc "pathlib's `base / part`: an absolute `part` replaces `base`."
+  @spec join(String.t(), String.t()) :: String.t()
+  def join(_base, "/" <> _ = absolute), do: absolute
+  def join(base, part), do: Path.join(base, part)
+
+  @doc "`expanduser/1` for a call site where Python's RuntimeError would escape: it raises."
+  @spec expanduser!(String.t()) :: String.t()
+  def expanduser!(text), do: unwrap!(expanduser(text))
+
+  @doc "`resolve/1` for a call site where Python's exception would escape: it raises."
+  @spec resolve!(String.t()) :: String.t()
+  def resolve!(text), do: unwrap!(resolve(text))
+
+  defp unwrap!({:ok, value}), do: value
+  defp unwrap!({:error, message}), do: raise(RuntimeError, message)
+
   @doc """
   `Path(text).expanduser().resolve()`, lexically (symlinks are not followed). A path holding a
   lone surrogate cannot be encoded for the filesystem: Python's `UnicodeEncodeError`, raised by
@@ -492,7 +629,9 @@ defmodule Cornerman.Py do
     "[Errno #{errno}] #{text}: #{repr(path)}"
   end
 
+  defp errno(:eperm), do: {1, "Operation not permitted"}
   defp errno(:enoent), do: {2, "No such file or directory"}
+  defp errno(:eexist), do: {17, "File exists"}
   defp errno(:eacces), do: {13, "Permission denied"}
   defp errno(:enotdir), do: {20, "Not a directory"}
   defp errno(:eisdir), do: {21, "Is a directory"}

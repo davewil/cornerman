@@ -9,7 +9,10 @@ defmodule Cornerman.Application do
   def start(_type, _args) do
     children = [
       {Registry, keys: :unique, name: Cornerman.Spawn.Registry},
-      {DynamicSupervisor, name: Cornerman.Spawn.Supervisor, strategy: :one_for_one}
+      {DynamicSupervisor, name: Cornerman.Spawn.Supervisor, strategy: :one_for_one},
+      # Run events: one topic per run id (Cornerman.Run.StateMirror.topic/1).
+      {Phoenix.PubSub, name: Cornerman.PubSub},
+      {DynamicSupervisor, name: Cornerman.Runs, strategy: :one_for_one}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

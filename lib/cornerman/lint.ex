@@ -1,18 +1,19 @@
 defmodule Cornerman.Lint do
   @moduledoc """
   Manifest lint (Ringer's `lint_manifest`, called as `ringer.py lint` calls it: no config,
-  no model-log nudges). Each rule is a small function from validated structs to findings;
-  `findings/2` concatenates them in Ringer's order.
+  no model-log nudges; `run` adds both). Each rule is a small function from validated structs
+  to findings; `findings/2` concatenates them in Ringer's order.
   """
 
-  alias Cornerman.{Manifest, ModelRegistry, Py}
+  alias Cornerman.{AppConfig, Manifest, ModelRegistry, Py}
   alias Cornerman.Lint.Check
   alias Cornerman.Manifest.Task
 
   @doc """
   All findings for `manifest`, in Ringer's order. Options: `:allow_noncanonical_route`
   (skip the registry rule) and `:registry` (a loaded `ModelRegistry`, loaded lazily
-  otherwise).
+  otherwise), `:include_model_log_nudges` (the task_type nudge `run` adds) and `:config` (an
+  `AppConfig`, whose engines' `model_default` then fills an unset task model).
 
   Lint can fail instead of reporting: Ringer expands `~user` in every `expect_files` entry
   and Python raises when a user does not exist, so an unresolvable `~user` is
@@ -20,11 +21,13 @@ defmodule Cornerman.Lint do
   """
   @spec findings(Manifest.t(), keyword()) :: {:ok, [String.t()]} | {:error, String.t()}
   def findings(%Manifest{} = manifest, opts \\ []) do
+    nudges? = Keyword.get(opts, :include_model_log_nudges, false)
+
     with {:ok, collisions} <- write_collisions(manifest) do
       {:ok,
        Enum.concat([
          reserved_run_name(manifest),
-         Enum.flat_map(manifest.tasks, &task_findings(manifest, &1)),
+         Enum.flat_map(manifest.tasks, &task_findings(manifest, &1, nudges?)),
          serial_fanout(manifest),
          collisions,
          if(Keyword.get(opts, :allow_noncanonical_route, false),
@@ -32,7 +35,8 @@ defmodule Cornerman.Lint do
            else:
              noncanonical_routes(
                manifest,
-               Keyword.get_lazy(opts, :registry, &ModelRegistry.load/0)
+               Keyword.get_lazy(opts, :registry, &ModelRegistry.load/0),
+               Keyword.get(opts, :config)
              )
          )
        ])}
@@ -46,7 +50,7 @@ defmodule Cornerman.Lint do
       else: []
   end
 
-  defp task_findings(manifest, task) do
+  defp task_findings(manifest, task, nudges?) do
     [
       {Check.cannot_fail?(task.check), "check cannot fail, so the task cannot be verified."},
       {Check.may_fail_silently?(task.check),
@@ -65,7 +69,10 @@ defmodule Cornerman.Lint do
          "declare them so the reader sees exactly the right work."},
       {task.verified == "",
        "no 'verified' description; a reader of the results page sees 'checked' but not what " <>
-         "the check proves — add one plain-English sentence."}
+         "the check proves — add one plain-English sentence."},
+      {nudges? and task.task_type == "",
+       "no task_type; the model log buckets this as (untyped) — name one (e.g. code-feature, " <>
+         "research, image-gen) so 'cornerman models' can guide routing."}
     ]
     |> Enum.filter(&elem(&1, 0))
     |> Enum.map(fn {true, text} -> "#{task.key}: #{text}" end)
@@ -120,9 +127,9 @@ defmodule Cornerman.Lint do
     end
   end
 
-  defp noncanonical_routes(%Manifest{tasks: tasks}, %ModelRegistry{} = registry) do
+  defp noncanonical_routes(%Manifest{tasks: tasks}, %ModelRegistry{} = registry, config) do
     for task <- tasks,
-        model_key = route_model_key(task, registry),
+        model_key = route_model_key(task, registry, config),
         route = Map.get(registry.routes, {task.engine, model_key}),
         route != nil do
       "ERROR: #{task.key}: #{task.engine}:#{model_key} is a noncanonical route for " <>
@@ -131,9 +138,22 @@ defmodule Cornerman.Lint do
     end
   end
 
-  # lint passes no config, so an engine's model_default never applies here.
-  defp route_model_key(%Task{model: "", engine: engine}, registry),
-    do: Map.get(registry.defaults, engine, "")
+  # `lint` passes no config, so an engine's model_default only applies on `run`.
+  defp route_model_key(%Task{model: "", engine: engine}, registry, config) do
+    case config_model_default(config, engine) do
+      "" -> Map.get(registry.defaults, engine, "")
+      model -> model
+    end
+  end
 
-  defp route_model_key(%Task{model: model}, _registry), do: model
+  defp route_model_key(%Task{model: model}, _registry, _config), do: model
+
+  defp config_model_default(nil, _engine), do: ""
+
+  defp config_model_default(%AppConfig{engines: engines}, engine) do
+    case Map.get(engines, engine) do
+      nil -> ""
+      %AppConfig.Engine{model_default: model} -> model
+    end
+  end
 end
