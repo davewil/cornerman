@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Cornerman CLI launcher for phases 1-4. It runs the compiled app straight from _build, so
+# `mix compile` (or `MIX_ENV=test mix compile`) must have run. Phase 5 replaces this with a
+# release. Not an escript: escripts cannot carry erlexec's priv/exec-port.
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+lib="$root/_build/${MIX_ENV:-dev}/lib"
+if [ ! -d "$lib/cornerman/ebin" ]; then
+  echo "cornerman: error: not compiled; run 'mix compile' in $root" >&2
+  exit 70
+fi
+pa=()
+for ebin in "$lib"/*/ebin; do pa+=(-pa "$ebin"); done
+exec "${CORNERMAN_ELIXIR:-elixir}" "${pa[@]}" \
+  -e 'System.halt(Cornerman.CLI.main(System.argv()))' -- "$@"

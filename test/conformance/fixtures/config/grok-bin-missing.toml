@@ -1,0 +1,9 @@
+# An extra engine whose bin is a bare name that is not on the sealed PATH, plus one with
+# a path separator (never searched). Only the grok one should produce a diagnostic.
+[engines.grok]
+bin = "grok"
+args_template = ["-p", "{spec}"]
+
+[engines.local]
+bin = "/nonexistent/dir/local-worker"
+args_template = ["{spec}"]

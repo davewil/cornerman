@@ -1,0 +1,16 @@
+{
+  "run_name": "conformance",
+  "workdir": "/tmp/cornerman-conformance-work",
+  "max_parallel": 2,
+  "tasks": [
+    {
+      "key": "alpha",
+      "spec": "Make alpha.txt.",
+      "check": "printf 'ready\\n' | diff -u - alpha.txt || { echo 'FAIL: alpha.txt must hold ready'; exit 1; }",
+      "expect_files": [
+        "alpha.txt"
+      ],
+      "verified": "alpha.txt holds exactly the word ready."
+    }
+  ]
+}

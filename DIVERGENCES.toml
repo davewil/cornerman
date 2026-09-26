@@ -8,6 +8,16 @@
 # case = "run/per-run-dashboard-port"   # conformance case id
 # since = "2026-09-25"                   # date the divergence was accepted
 # upstream_sha = "0be58d3"               # oracle SHA it was measured against
+# fields = ["stderr"]                     # optional; default is all three
 # reason = "Per-run dashboards on :8787+ are retired into the single LiveView endpoint."
 #
-# No entries yet: nothing has been ported.
+
+# Fields: which of "status", "stdout", "stderr" may differ for the case; the rest must
+# still match. A case whose exempt fields match again fails as stale.
+
+[[divergence]]
+case = "lint/error-invalid-json"
+fields = ["stderr"]
+since = "2026-09-26"
+upstream_sha = "0be58d3"
+reason = "The message after 'cornerman: error: ' comes from Elixir's JSON parser, not Python's json module. Exit status (2), empty stdout and the error prefix must still match."

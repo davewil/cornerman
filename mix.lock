@@ -1,3 +1,4 @@
 %{
   "erlexec": {:hex, :erlexec, "2.5.0", "a0c603f3903421db16d6a4f49862f4cb7431d1aa17b4b3d7f3f5e2fe20905121", [:rebar3], [], "hexpm", "b24ff24c5fc084248f3498ca96f739daf820f3db02d9ba1006ab127de14b7215"},
+  "toml_elixir": {:hex, :toml_elixir, "3.1.0", "7e3d8803f1e27e0585b13f57e68a37f4b7437c0cf8ad868abd56f10def144dc1", [:mix], [], "hexpm", "95e676725c6d411dd079bb34e2167b505600930280d6c7a51f6000ea669c2f69"},
 }

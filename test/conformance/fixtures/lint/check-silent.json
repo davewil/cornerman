@@ -1,0 +1,34 @@
+{
+  "run_name": "conformance",
+  "workdir": "/tmp/cornerman-conformance-work",
+  "max_parallel": 2,
+  "tasks": [
+    {
+      "key": "t-testf",
+      "spec": "You are a worker writing one file. In the current directory create alpha.txt containing exactly one line, the word ready, followed by a newline. Touch nothing else.",
+      "check": "test -f alpha.txt",
+      "expect_files": [
+        "alpha.txt"
+      ],
+      "verified": "alpha.txt holds exactly the word ready."
+    },
+    {
+      "key": "t-gitq",
+      "spec": "You are a worker writing one file. In the current directory create alpha.txt containing exactly one line, the word ready, followed by a newline. Touch nothing else.",
+      "check": "git diff --quiet",
+      "expect_files": [
+        "alpha.txt"
+      ],
+      "verified": "alpha.txt holds exactly the word ready."
+    },
+    {
+      "key": "t-grepq",
+      "spec": "You are a worker writing one file. In the current directory create alpha.txt containing exactly one line, the word ready, followed by a newline. Touch nothing else.",
+      "check": "grep -q ready alpha.txt",
+      "expect_files": [
+        "alpha.txt"
+      ],
+      "verified": "alpha.txt holds exactly the word ready."
+    }
+  ]
+}

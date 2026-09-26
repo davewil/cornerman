@@ -1,0 +1,6 @@
+{
+  "run_name": "conformance",
+  "workdir": "/tmp/cornerman-conformance-work",
+  "max_parallel": 2,
+  "tasks": []
+}

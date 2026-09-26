@@ -1,0 +1,27 @@
+{
+  "run_name": "conformance",
+  "workdir": "/tmp/cornerman-conformance-work",
+  "max_parallel": 2,
+  "tasks": [
+    {
+      "key": "commits",
+      "spec": "You are a worker writing one file. In the current directory create alpha.txt containing exactly one line, the word ready, followed by a newline. Touch nothing else. When finished, git commit your changes with a clear message.",
+      "check": "printf 'ready\\n' | diff -u - alpha.txt || { echo 'FAIL: alpha.txt must hold ready'; exit 1; }",
+      "expect_files": [
+        "alpha.txt"
+      ],
+      "verified": "alpha.txt holds exactly the word ready."
+    },
+    {
+      "key": "no-commit",
+      "spec": "You are a worker writing one file. In the current directory create alpha.txt containing exactly one line, the word ready, followed by a newline. Touch nothing else. Do not git commit; leave the changes uncommitted.",
+      "check": "printf 'ready\\n' | diff -u - alpha.txt || { echo 'FAIL: alpha.txt must hold ready'; exit 1; }",
+      "expect_files": [
+        "alpha.txt"
+      ],
+      "verified": "alpha.txt holds exactly the word ready."
+    }
+  ],
+  "worktrees": true,
+  "repo": "/tmp/cornerman-conformance-repo"
+}

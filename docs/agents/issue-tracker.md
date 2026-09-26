@@ -26,7 +26,7 @@ the gist and points at the repo; never paste a plan section into Linear as a sec
 | Open decision | `wayfinder:grilling` + `ready-for-human` | Todo | David's call. An agent never answers it. Each one blocks the phase that needs the answer. |
 | Deferral | `deferred` | Backlog | The body holds the revisit trigger and what the option would need. Check the trigger has fired before picking one up. |
 | After-parity work | `Improvement` | Backlog | Blocked by the phase that makes it possible. |
-| Upstream drift item | chosen in ENG-483 | Todo | Filed by the bump job. |
+| Upstream drift item | `Improvement` | Todo | Sub-issue of ENG-473, filed by the bump job (decided in ENG-483). The title names the upstream SHA range; the body lists the failing conformance cases or the new surface with no case. |
 
 ## Conventions
 
