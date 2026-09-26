@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-shot: wait for the Codex usage window to reset, then run the phase 1a Codex lanes
+# One-shot: wait for the Codex usage window to reset, then run the phase 1a Codex lane(s)
 # (round 2 of cornerman-phase1a-lint) from a clone pinned at the red harness commit, so a
 # lint port landed on main in the meantime can't make the round meaningless.
 # Usage: run-codex-at-reset.sh <HH:MM local> <pinned sha>
