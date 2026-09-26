@@ -193,6 +193,9 @@ defmodule Cornerman.SpawnTest do
         ])
 
       beam_pid = wait_for_pids(beam_pidfile, 1, 60_000) |> hd()
+      # Whatever the assertions below do, the child VM must not outlive the test: in a
+      # sandbox where `ps` is blocked, an early failure used to leave it sleeping forever.
+      on_exit(fn -> System.cmd("kill", ["-9", beam_pid], stderr_to_stdout: true) end)
       # Generous: the child VM starts cold, and under a loaded machine (a swarm running
       # this suite in parallel) its worker can take several seconds to write the file.
       worker_pids =

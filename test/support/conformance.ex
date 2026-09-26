@@ -72,7 +72,9 @@ defmodule Cornerman.Conformance do
   def run_both(argv, opts) do
     home = sealed_home()
     opts = Keyword.put(opts, :home, home)
-    %{oracle: run(:oracle, argv, opts), cornerman: run(:cornerman, argv, opts)}
+    pair = %{oracle: run(:oracle, argv, opts), cornerman: run(:cornerman, argv, opts)}
+    File.rm_rf!(home)
+    pair
   end
 
   def sealed_home do

@@ -90,6 +90,10 @@ defmodule Cornerman.Conformance.Scenario do
     cornerman = observe(second, scenario, home, capture)
     after_each.(second, home)
 
+    # Observations are in memory now; the sealed home and captures are only disk.
+    File.rm_rf!(home)
+    File.rm_rf!(capture)
+
     %{oracle: oracle, cornerman: cornerman}
   end
 
