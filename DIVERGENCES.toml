@@ -22,6 +22,13 @@ since = "2026-09-26"
 upstream_sha = "0be58d3"
 reason = "The message after 'cornerman: error: ' is worded like Elixir's JSON.DecodeError (Cornerman.Py.Json keeps that wording since ENG-495), not like Python's json module. Exit status (2), empty stdout and the error prefix must still match."
 
+[[divergence]]
+case = "lint/error-surrogate-position-symlinked-workdir"
+fields = ["stderr"]
+since = "2026-09-26"
+upstream_sha = "0be58d3"
+reason = "A lone surrogate in a path gives Python's UnicodeEncodeError, whose position counts characters in the path os.path.realpath had built when it failed: symlinks already resolved. Cornerman resolves paths lexically and never follows symlinks, so its position counts the path as written. The fixture's workdir goes through /var/run, so the positions differ on macOS (/var -> /private/var, 8 more in Python) and on Ubuntu (/var/run -> /run, 4 fewer). Decided by David on ENG-495 (ledger it rather than follow symlinks). Exit status (2), empty stdout and the rest of the message must still match. If /var/run is ever not a symlink the entry goes stale and the case fails."
+
 # File divergence: `paths` lists globs (relative to the sealed home) whose files must exist
 # in both implementations but whose contents may differ. `case` may end in "/*".
 [[divergence]]
