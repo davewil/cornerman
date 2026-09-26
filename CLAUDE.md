@@ -2,6 +2,8 @@
 
 An Elixir/OTP/LiveView port of Ringer that tracks upstream. Read `README.md` for the relationship
 and `docs/plan.html` for the architecture and phases before changing anything structural.
+Words with a meaning specific to this repo (lint, oracle, divergence, lane, gate, …) are defined in
+`CONTEXT.md`; add a term there when you settle one.
 
 - Work is tracked in Linear: team `Engineering`, project `cornerman`, map issue ENG-473. Linear owns
   state and the repo owns content. Conventions are in `docs/agents/issue-tracker.md`; claim the issue
