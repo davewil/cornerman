@@ -1,0 +1,3 @@
+# Engines declared in one inline table, in non-alphabetical order. Ringer warns about
+# each unresolvable bin in file order: zeta, then alpha, then mid.
+engines = { zeta = { bin = "zeta-bin", args_template = ["{spec}"] }, alpha = { bin = "alpha-bin", args_template = ["{spec}"] }, mid = { bin = "mid-bin", args_template = ["{spec}"] } }

@@ -1,0 +1,34 @@
+{
+  "run_name": "conformance",
+  "workdir": "/tmp/cornerman-conformance-work",
+  "max_parallel": "\u0661",
+  "tasks": [
+    {
+      "key": "a",
+      "spec": "You are a worker writing one file. In the current directory create alpha.txt containing exactly one line, the word ready, followed by a newline. Touch nothing else.",
+      "check": "printf 'ready\\n' | diff -u - alpha.txt || { echo 'FAIL: alpha.txt must hold ready'; exit 1; }",
+      "expect_files": [
+        "/tmp/cornerman-conformance-out/a.txt"
+      ],
+      "verified": "alpha.txt holds exactly the word ready."
+    },
+    {
+      "key": "b",
+      "spec": "You are a worker writing one file. In the current directory create alpha.txt containing exactly one line, the word ready, followed by a newline. Touch nothing else.",
+      "check": "printf 'ready\\n' | diff -u - alpha.txt || { echo 'FAIL: alpha.txt must hold ready'; exit 1; }",
+      "expect_files": [
+        "/tmp/cornerman-conformance-out/b.txt"
+      ],
+      "verified": "alpha.txt holds exactly the word ready."
+    },
+    {
+      "key": "c",
+      "spec": "You are a worker writing one file. In the current directory create alpha.txt containing exactly one line, the word ready, followed by a newline. Touch nothing else.",
+      "check": "printf 'ready\\n' | diff -u - alpha.txt || { echo 'FAIL: alpha.txt must hold ready'; exit 1; }",
+      "expect_files": [
+        "/tmp/cornerman-conformance-out/c.txt"
+      ],
+      "verified": "alpha.txt holds exactly the word ready."
+    }
+  ]
+}

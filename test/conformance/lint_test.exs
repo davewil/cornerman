@@ -83,6 +83,12 @@ defmodule Cornerman.Conformance.LintTest do
     conforms!("lint/argv-unknown-flag", ["lint", "--bogus", fixture], [])
   end
 
+  # argparse reads an option-looking word as the next option, not as --config's value.
+  test "lint/argv-config-value-looks-like-option" do
+    fixture = Conformance.fixture("lint/clean.json")
+    conforms!("lint/argv-config-value-looks-like-option", ["--config", "-x", "lint", fixture], [])
+  end
+
   # --- engine-binary diagnostics (stderr) ------------------------------------------------
 
   test "lint/diagnostic-default-codex-missing" do
@@ -108,6 +114,14 @@ defmodule Cornerman.Conformance.LintTest do
       config: config,
       path_order: :tools_first
     )
+  end
+
+  # tomllib keeps insertion order inside inline tables too, so the warnings follow the file.
+  test "lint/diagnostic-inline-table-engine-order" do
+    fixture = Conformance.fixture("lint/clean.json")
+    config = Conformance.fixture("config/inline-engines.toml")
+
+    conforms!("lint/diagnostic-inline-table-engine-order", ["lint", fixture], config: config)
   end
 
   # --- every upstream template, as shipped ------------------------------------------------
