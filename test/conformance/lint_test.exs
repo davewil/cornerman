@@ -97,6 +97,19 @@ defmodule Cornerman.Conformance.LintTest do
     conforms!("lint/diagnostic-configured-engine-missing", ["lint", fixture], config: config)
   end
 
+  # Found by probing, not by the original suite: with the OTP root's bin dir first on PATH
+  # (a normal mise shell), the Erlang launcher's PATH rewrite can't be undone from inside
+  # the VM, and the "searched PATH" in the warning came out wrong.
+  test "lint/diagnostic-path-tools-first" do
+    fixture = Conformance.fixture("lint/clean.json")
+    config = Conformance.fixture("config/grok-bin-missing.toml")
+
+    conforms!("lint/diagnostic-path-tools-first", ["lint", fixture],
+      config: config,
+      path_order: :tools_first
+    )
+  end
+
   # --- every upstream template, as shipped ------------------------------------------------
 
   for manifest <-

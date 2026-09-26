@@ -32,7 +32,8 @@ defmodule Cornerman.Conformance do
 
   Options: `:home` (required, the sealed dir), `:config` (a path used as `RINGER_CONFIG`),
   `:fake_bins` (names made executable in the fake-bin dir, default `["codex"]`, which is
-  what an unconfigured Ringer resolves).
+  what an unconfigured Ringer resolves), `:path_order` (`:fake_bin_first`, the default, or
+  `:tools_first`, with the Erlang and Elixir bin dirs ahead of the fake-bin dir).
   """
   @spec run(:oracle | :cornerman, [String.t()], keyword()) :: result()
   def run(impl, argv, opts) do
@@ -91,8 +92,19 @@ defmodule Cornerman.Conformance do
     end
 
     elixir = System.find_executable("elixir")
-    erl = System.find_executable("erl")
-    path = Enum.join([fake_bin, Path.dirname(erl), Path.dirname(elixir), "/usr/bin", "/bin"], ":")
+    # Not System.find_executable("erl"): inside this VM, PATH has already been rewritten by
+    # the Erlang launcher and would yield erts-<vsn>/bin. A user's shell has <root>/bin.
+    erl = Path.join([to_string(:code.root_dir()), "bin", "erl"])
+
+    dirs =
+      case Keyword.get(opts, :path_order, :fake_bin_first) do
+        :fake_bin_first -> [fake_bin, Path.dirname(erl), Path.dirname(elixir)]
+        # As in an ordinary shell with mise: the OTP root's bin dir comes first. The Erlang
+        # launcher rewrites PATH differently when it finds its own root there.
+        :tools_first -> [Path.dirname(erl), Path.dirname(elixir), fake_bin]
+      end
+
+    path = Enum.join(dirs ++ ["/usr/bin", "/bin"], ":")
 
     base = [
       {"HOME", home},

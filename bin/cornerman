@@ -9,6 +9,9 @@ if [ ! -d "$lib/cornerman/ebin" ]; then
   echo "cornerman: error: not compiled; run 'mix compile' in $root" >&2
   exit 70
 fi
+# Record PATH exactly as the caller set it: the Erlang launcher rewrites PATH before any
+# Elixir code runs, and Ringer prints the PATH it searched. Cornerman.Env reads these.
+if [ -n "${PATH+set}" ]; then export CORNERMAN_CALLER_PATH="$PATH"; else export CORNERMAN_CALLER_PATH_UNSET=1; fi
 pa=()
 for ebin in "$lib"/*/ebin; do pa+=(-pa "$ebin"); done
 exec "${CORNERMAN_ELIXIR:-elixir}" "${pa[@]}" \

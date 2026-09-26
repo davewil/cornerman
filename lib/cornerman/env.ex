@@ -6,7 +6,8 @@ defmodule Cornerman.Env do
   is already on `PATH` it moves `<root>/erts-<vsn>/bin` to the front, deleting it from
   wherever it was; otherwise it prepends `<root>/erts-<vsn>/bin:<root>/bin`. An unset `PATH`
   becomes exactly those two directories. Ringer prints the `PATH` it searched, so Cornerman
-  undoes the rewrite before searching or printing.
+  undoes the rewrite before searching or printing: exactly, from the record `bin/cornerman`
+  leaves, or otherwise by the reconstruction below.
 
   The undo is exact except in two indistinguishable cases. A caller `PATH` starting with
   `<root>/bin` comes out the same as one with no OTP root at all; it is read as the latter.
@@ -17,9 +18,21 @@ defmodule Cornerman.Env do
   the directory holding `elixir`, which is a chosen rule, not a recovered fact (see notes.md).
   """
 
-  @doc "The caller's `PATH`, or `nil` when it was unset."
+  @doc """
+  The caller's `PATH`, or `nil` when it was unset.
+
+  `bin/cornerman` records it before the Erlang launcher runs (`CORNERMAN_CALLER_PATH`, or
+  `CORNERMAN_CALLER_PATH_UNSET`), which is exact. Without that record (code running inside
+  `mix`), it falls back to undoing the launcher's rewrite, which cannot tell every layout apart.
+  """
   @spec path() :: String.t() | nil
-  def path, do: unlaunch(System.get_env("PATH"))
+  def path do
+    cond do
+      System.get_env("CORNERMAN_CALLER_PATH_UNSET") == "1" -> nil
+      caller = System.get_env("CORNERMAN_CALLER_PATH") -> caller
+      true -> unlaunch(System.get_env("PATH"))
+    end
+  end
 
   @doc false
   @spec unlaunch(String.t() | nil) :: String.t() | nil
